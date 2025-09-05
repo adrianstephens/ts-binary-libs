@@ -138,7 +138,7 @@ const COLOUR = {
 } as const;
 
 class DirEntry  extends binary.Class({
-	name:			binary.StringType(64, 'utf16le'),
+	name:			binary.StringType(32, 'utf16le'),
 	name_size:		binary.UINT16_LE,
 	type:			binary.UINT8,
 	colour:			binary.UINT8,
