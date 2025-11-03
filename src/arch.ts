@@ -66,8 +66,8 @@ export class ArchFile {
 					}
 
 					case 2: { // microsoft symbols
-						const member_offsets	= binary.ArrayType(binary.INT32_LE, binary.INT32_LE).get(s2);
-						const indices			= binary.ArrayType(binary.INT32_LE, binary.INT16_LE).get(s2);
+						const _offsets	= binary.ArrayType(binary.INT32_LE, binary.INT32_LE).get(s2);
+						const indices	= binary.ArrayType(binary.INT32_LE, binary.INT16_LE).get(s2);
 
 						member.name = 'Symbols2';
 						member.contents = indices.map(i => [

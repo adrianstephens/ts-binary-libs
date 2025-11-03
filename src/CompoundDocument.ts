@@ -132,11 +132,11 @@ const TYPE = {
 	Property:		4,
 	RootStorage:	5,
 } as const;
-
+/*
 const COLOUR = {
 	RED: 0, BLACK: 1
 } as const;
-
+*/
 class DirEntry  extends binary.Class({
 	name:			binary.StringType(32, 'utf16le'),
 	name_size:		binary.UINT16_LE,

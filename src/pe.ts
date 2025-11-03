@@ -461,7 +461,8 @@ export function ReadExports(file: pe_stream) {
 	const sorted = result.sort((a, b)=> a.address - b.address);
 	return sorted.map((v, i) => {
 		let j = i;
-		while (++j < sorted.length && sorted[j].address == v.address);
+		while (++j < sorted.length && sorted[j].address == v.address)
+			;
 		return [v.ordinal, v.name, file.pe.GetDataRVA(v.address, j < sorted.length ? sorted[j].address - v.address : undefined)];
 	});
 }
