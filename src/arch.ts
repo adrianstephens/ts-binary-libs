@@ -41,7 +41,7 @@ export class ArchFile {
 		while (s.remaining() > 0) {
 			const member = binary.read(s, _HEADER);
 			const data = s.read_buffer(member.size);
-			s.align(2);
+			binary.AlignType(2).get(s);//.align(2);
 
 			if (member.name == '/') {
 				long_names = binary.utils.decodeText(data, 'utf8');

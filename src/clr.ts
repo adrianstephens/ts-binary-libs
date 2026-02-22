@@ -1,4 +1,4 @@
-import * as binary from '@isopodlabs/binary';
+import * as bin from '@isopodlabs/binary';
 import * as pe from './pe';
 
 //-----------------------------------------------------------------------------
@@ -22,12 +22,12 @@ const CLR_FLAGS = {
 } as const;
 
 const CLR_HEADER = {
-	cb:							binary.UINT32_LE,
-	MajorRuntimeVersion:		binary.UINT16_LE,
-	MinorRuntimeVersion:		binary.UINT16_LE,
+	cb:							bin.UINT32_LE,
+	MajorRuntimeVersion:		bin.UINT16_LE,
+	MinorRuntimeVersion:		bin.UINT16_LE,
 	MetaData:					pe.DATA_DIRECTORY,
-	Flags:						binary.asFlags(binary.UINT32_LE, CLR_FLAGS),
-	EntryPoint:					binary.UINT32_LE,
+	Flags:						bin.asFlags(bin.UINT32_LE, CLR_FLAGS),
+	EntryPoint:					bin.UINT32_LE,
 	Resources:					pe.DATA_DIRECTORY,
 	StrongNameSignature:		pe.DATA_DIRECTORY,
 	CodeManagerTable:			pe.DATA_DIRECTORY,
@@ -37,30 +37,30 @@ const CLR_HEADER = {
 };
 
 const STREAM_HDR = {
-	Offset:		binary.UINT32_LE,		// Memory offset to start of this stream from start of the metadata root (§II.24.2.1)
-	Size:		binary.UINT32_LE,		// Size of this stream in bytes, shall be a multiple of 4.
-	Name:		binary.NullTerminatedStringType(),	// Name of the stream as null-terminated variable length array of ASCII characters, padded to the next 4-byte boundary with \0 characters. The name is limited to 32 characters.
-	unused:		binary.AlignType(4),
+	Offset:		bin.UINT32_LE,		// Memory offset to start of this stream from start of the metadata root (§II.24.2.1)
+	Size:		bin.UINT32_LE,		// Size of this stream in bytes, shall be a multiple of 4.
+	Name:		bin.NullTerminatedStringType(),	// Name of the stream as null-terminated variable length array of ASCII characters, padded to the next 4-byte boundary with \0 characters. The name is limited to 32 characters.
+	unused:		bin.AlignType(4),
 };
 
 const METADATA_ROOT = {
-	Signature:    	binary.UINT32_LE,	//'BSJB'
-	MajorVersion: 	binary.UINT16_LE,
-	MinorVersion: 	binary.UINT16_LE,
-	Reserved:     	binary.UINT32_LE,	// always 0
-	Version:      	binary.StringType(binary.UINT32_LE, 'utf8', true),
-	unknown: 		binary.UINT16_LE,
-	Streams:		binary.ArrayType(binary.UINT16_LE, STREAM_HDR)
+	Signature:    	bin.UINT32_LE,	//'BSJB'
+	MajorVersion: 	bin.UINT16_LE,
+	MinorVersion: 	bin.UINT16_LE,
+	Reserved:     	bin.UINT32_LE,	// always 0
+	Version:      	bin.StringType(bin.UINT32_LE, 'utf8', true),
+	unknown: 		bin.UINT16_LE,
+	Streams:		bin.ArrayType(bin.UINT16_LE, STREAM_HDR)
 };
 
 const CLR_TABLES = {
-	Reserved:    	binary.UINT32_LE,	// Reserved, always 0 (§II.24.1).
-	MajorVersion:	binary.UINT8,		// Major version of table schemata; shall be 2 (§II.24.1).
-	MinorVersion:	binary.UINT8,		// Minor version of table schemata; shall be 0 (§II.24.1).
-	HeapSizes:   	binary.UINT8,		// Bit vector for heap sizes.
-	Reserved2:   	binary.UINT8,		// Reserved, always 1 (§II.24.1).
-	Valid:  	 	binary.UINT64_LE,	// Bit vector of present tables, let n be the number of bits that are 1.
-	Sorted: 	 	binary.UINT64_LE,	// Bit vector of sorted tables.
+	Reserved:    	bin.UINT32_LE,	// Reserved, always 0 (§II.24.1).
+	MajorVersion:	bin.UINT8,		// Major version of table schemata; shall be 2 (§II.24.1).
+	MinorVersion:	bin.UINT8,		// Minor version of table schemata; shall be 0 (§II.24.1).
+	HeapSizes:   	bin.UINT8,		// Bit vector for heap sizes.
+	Reserved2:   	bin.UINT8,		// Reserved, always 1 (§II.24.1).
+	Valid:  	 	bin.UINT64_LE,	// Bit vector of present tables, let n be the number of bits that are 1.
+	Sorted: 	 	bin.UINT64_LE,	// Bit vector of sorted tables.
 };
 
 enum TABLE {
@@ -125,12 +125,12 @@ function bytesToGuid(bytes: Uint8Array) {
            hexArray.slice(10, 16).join('');
 }
 
-class clr_stream extends binary.stream {
+class clr_stream extends bin.stream {
 	constructor(buffer: Uint8Array, public heaps:Uint8Array[], public heap_sizes: number, public table_counts: number[]) {
 		super(buffer);
 	}
 	getOffset(big: boolean) {
-		return (big ? binary.UINT32_LE : binary.UINT16_LE).get(this);
+		return (big ? bin.UINT32_LE : bin.UINT16_LE).get(this);
 	}
 	getHeap(heap:number) {
 		return this.heaps[heap].subarray(this.getOffset(!!(this.heap_sizes & (1 << heap))));
@@ -142,9 +142,9 @@ class clr_stream extends binary.stream {
 		const	thresh = 0xffff >> B;
 		for (const i of trans) {
 			if (this.table_counts[i] > thresh)
-				return binary.UINT32_LE.get(this);
+				return bin.UINT32_LE.get(this);
 		}
-		return binary.UINT16_LE.get(this);
+		return bin.UINT16_LE.get(this);
 	}
 	getString() {
 		const mem	= this.getHeap(HEAP.String);
@@ -158,12 +158,12 @@ class clr_stream extends binary.stream {
 		return this.getHeap(HEAP.Blob);
 	}
 }
-class clr_dummy extends binary.dummy {
+class clr_dummy extends bin.dummy {
 	constructor(public heap_sizes: number, public table_counts: number[]) {
 		super();
 	}
 	getOffset(big: boolean) {
-		return (big ? binary.UINT32_LE : binary.UINT16_LE).get(this);
+		return (big ? bin.UINT32_LE : bin.UINT16_LE).get(this);
 	}
 	getHeap(heap:number) {
 		return this.getOffset(!!(this.heap_sizes & (1 << heap)));
@@ -175,9 +175,9 @@ class clr_dummy extends binary.dummy {
 		const	thresh = 0xffff >> B;
 		for (const i of trans) {
 			if (this.table_counts[i] > thresh)
-				return binary.UINT32_LE.get(this);
+				return bin.UINT32_LE.get(this);
 		}
-		return binary.UINT16_LE.get(this);
+		return bin.UINT16_LE.get(this);
 	}
 	getString() { return this.getHeap(HEAP.String); }
 	getGUID() 	{ return this.getHeap(HEAP.GUID); }
@@ -199,7 +199,7 @@ const clr_Blob = {
 const Signature 			= clr_Blob;
 const CustomAttributeValue	= clr_Blob;
 
-const clr_Code = binary.UINT32_LE;
+const clr_Code = bin.UINT32_LE;
 
 function Indexed(table: number) {
 	return {
@@ -236,7 +236,7 @@ const ResolutionScope		= CodedIndex([TABLE.Module, TABLE.ModuleRef, TABLE.Assemb
 
 const TableReaders = {
 	[TABLE.Module]: {
-		generation:	binary.UINT16_LE,
+		generation:	bin.UINT16_LE,
 		name:		clr_String,
 		mvid:		clr_GUID,
 		encid:		clr_GUID,
@@ -248,7 +248,7 @@ const TableReaders = {
 		namespce:	clr_String,
 	},
 	[TABLE.TypeDef]: {
-		flags:		binary.UINT32_LE,
+		flags:		bin.UINT32_LE,
 		name:		clr_String,
 		namespce:	clr_String,
 		extends:	TypeDefOrRef,
@@ -256,21 +256,21 @@ const TableReaders = {
 		methods:	IndexedList(TABLE.MethodDef),
 	},
 	[TABLE.Field]: {
-		flags:		binary.UINT16_LE,
+		flags:		bin.UINT16_LE,
 		name:		clr_String,
 		signature:	Signature,
 	},
 	[TABLE.MethodDef]: {
 		code:		clr_Code,
-		implflags:	binary.UINT16_LE,
-		flags:		binary.UINT16_LE,
+		implflags:	bin.UINT16_LE,
+		flags:		bin.UINT16_LE,
 		name:		clr_String,
 		signature:	Signature,
 		paramlist:	IndexedList(TABLE.Param),
 	},
 	[TABLE.Param]: {
-		flags:		binary.UINT16_LE,
-		sequence:	binary.UINT16_LE,
+		flags:		bin.UINT16_LE,
+		sequence:	bin.UINT16_LE,
 		name:		clr_String,
 	},
 	[TABLE.InterfaceImpl]: {
@@ -283,7 +283,7 @@ const TableReaders = {
 		signature:	Signature,
 	},
 	[TABLE.Constant]: {
-		type:		binary.UINT16_LE,
+		type:		bin.UINT16_LE,
 		parent:		HasConstant,
 		value:		clr_Blob,
 	},
@@ -297,17 +297,17 @@ const TableReaders = {
 		native_type:	clr_Blob,
 	},
 	[TABLE.DeclSecurity]: {
-		action:			binary.UINT16_LE,
+		action:			bin.UINT16_LE,
 		parent:			HasDeclSecurity,
 		permission_set:	clr_Blob,
 	},
 	[TABLE.ClassLayout]: {
-		packing_size:	binary.UINT16_LE,
-		class_size:		binary.UINT32_LE,
+		packing_size:	bin.UINT16_LE,
+		class_size:		bin.UINT32_LE,
 		parent:			Indexed(TABLE.TypeDef),
 	},
 	[TABLE.FieldLayout]: {
-		offset:			binary.UINT32_LE,
+		offset:			bin.UINT32_LE,
 		field:			Indexed(TABLE.Field),
 	},
 	[TABLE.StandAloneSig]: {
@@ -318,7 +318,7 @@ const TableReaders = {
 		event_list:		IndexedList(TABLE.Event),
 	},
 	[TABLE.Event]: {
-		flags:			binary.UINT16_LE,
+		flags:			bin.UINT16_LE,
 		name:			clr_String,
 		event_type:		TypeDefOrRef,
 	},
@@ -327,12 +327,12 @@ const TableReaders = {
 		property_list:	IndexedList(TABLE.Property),
 	},
 	[TABLE.Property]: {
-		flags:			binary.UINT16_LE,
+		flags:			bin.UINT16_LE,
 		name:			clr_String,
 		type:			Signature,
 	},
 	[TABLE.MethodSemantics]: {
-		flags:			binary.UINT16_LE,
+		flags:			bin.UINT16_LE,
 		method:			Indexed(TABLE.MethodDef),
 		association:	HasSemantics,
 	},
@@ -348,70 +348,70 @@ const TableReaders = {
 		signature:		clr_Blob,
 	},
 	[TABLE.ImplMap]: {
-		flags:				binary.UINT16_LE,
+		flags:				bin.UINT16_LE,
 		member_forwarded:	MemberForwarded,
 		name:				clr_String,
 		scope:				Indexed(TABLE.ModuleRef),
 	},
 	[TABLE.FieldRVA]: {
-		rva:		binary.UINT32_LE,
+		rva:		bin.UINT32_LE,
 		field:		Indexed(TABLE.Field),
 	},
 	[TABLE.Assembly]: {
-		hashalg:	binary.UINT32_LE,
-		major:		binary.UINT16_LE,
-		minor:		binary.UINT16_LE,
-		build:		binary.UINT16_LE,
-		rev:		binary.UINT16_LE,
-		flags:		binary.UINT32_LE,
+		hashalg:	bin.UINT32_LE,
+		major:		bin.UINT16_LE,
+		minor:		bin.UINT16_LE,
+		build:		bin.UINT16_LE,
+		rev:		bin.UINT16_LE,
+		flags:		bin.UINT32_LE,
 		publickey:	clr_Blob,
 		name:		clr_String,
 		culture:	clr_String,
 	},
 	[TABLE.AssemblyProcessor]: {
-		processor:	binary.UINT32_LE,
+		processor:	bin.UINT32_LE,
 	},
 	[TABLE.AssemblyOS]: {
-		platform:	binary.UINT32_LE,
-		minor:		binary.UINT32_LE,
-		major:		binary.UINT32_LE,
+		platform:	bin.UINT32_LE,
+		minor:		bin.UINT32_LE,
+		major:		bin.UINT32_LE,
 	},
 	[TABLE.AssemblyRef]: {
-		major:		binary.UINT16_LE,
-		minor:		binary.UINT16_LE,
-		build:		binary.UINT16_LE,
-		rev:		binary.UINT16_LE,
-		flags:		binary.UINT32_LE,
+		major:		bin.UINT16_LE,
+		minor:		bin.UINT16_LE,
+		build:		bin.UINT16_LE,
+		rev:		bin.UINT16_LE,
+		flags:		bin.UINT32_LE,
 		publickey:	clr_Blob,
 		name:		clr_String,
 		culture:	clr_String,
 		hashvalue:	clr_Blob,
 	},
 	[TABLE.AssemblyRefProcessor]: {
-		processor:	binary.UINT32_LE,
+		processor:	bin.UINT32_LE,
 		assembly:	Indexed(TABLE.AssemblyRef),
 	},
 	[TABLE.AssemblyRefOS]: {
-		platform:	binary.UINT32_LE,
-		major:		binary.UINT32_LE,
-		minor:		binary.UINT32_LE,
+		platform:	bin.UINT32_LE,
+		major:		bin.UINT32_LE,
+		minor:		bin.UINT32_LE,
 		assembly:	Indexed(TABLE.AssemblyRef),
 	},
 	[TABLE.File]: {
-		flags:		binary.UINT32_LE,
+		flags:		bin.UINT32_LE,
 		name:		clr_String,
 		hash:		clr_Blob,
 	},
 	[TABLE.ExportedType]: {
-		flags:		binary.UINT32_LE,
-		typedef_id:	binary.UINT32_LE,//(a 4-byte index into a TypeDef table of another module in this Assembly).
+		flags:		bin.UINT32_LE,
+		typedef_id:	bin.UINT32_LE,//(a 4-byte index into a TypeDef table of another module in this Assembly).
 		name:		clr_String,
 		namespce:	clr_String,
 		implementation:	Implementation,
 	},
 	[TABLE.ManifestResource]: {
-		data:			binary.UINT32_LE,
-		flags:			binary.UINT32_LE,
+		data:			bin.UINT32_LE,
+		flags:			bin.UINT32_LE,
 		name:			clr_String,
 		implementation:	Implementation,
 	},
@@ -420,8 +420,8 @@ const TableReaders = {
 		enclosing_class:	Indexed(TABLE.TypeDef),
 	},
 	[TABLE.GenericParam]: {
-		number:			binary.UINT16_LE,
-		flags:			binary.UINT16_LE,
+		number:			bin.UINT16_LE,
+		flags:			bin.UINT16_LE,
 		owner:			TypeOrMethodDef,
 		name:			clr_String,
 	},
@@ -436,22 +436,22 @@ const TableReaders = {
 };
 
 const ResourceManagerHeader = {
-	magic:			binary.UINT32_LE,
-	version:		binary.UINT32_LE,
-	skip:			binary.UINT32_LE,
+	magic:			bin.UINT32_LE,
+	version:		bin.UINT32_LE,
+	skip:			bin.UINT32_LE,
 };
 
 const ResourceManager = {
-	reader: 		binary.StringType(binary.UINT8),// Class name of IResourceReader to parse this file
-	set:			binary.StringType(binary.UINT8),// Class name of ResourceSet to parse this file
-	version:		binary.UINT32_LE,
-	num_resources:	binary.UINT32_LE,
-	types: 			binary.ArrayType(binary.UINT32_LE, binary.StringType(binary.UINT8)),
+	reader: 		bin.StringType(bin.UINT8),// Class name of IResourceReader to parse this file
+	set:			bin.StringType(bin.UINT8),// Class name of ResourceSet to parse this file
+	version:		bin.UINT32_LE,
+	num_resources:	bin.UINT32_LE,
+	types: 			bin.ArrayType(bin.UINT32_LE, bin.StringType(bin.UINT8)),
 };
 
 const ResourceEntry = {
-	name:			binary.StringType(binary.UINT8, 'utf16le', false, 1),
-	offset:			binary.UINT32_LE,
+	name:			bin.StringType(bin.UINT8, 'utf16le', false, 1),
+	offset:			bin.UINT32_LE,
 };
 
 interface Table { count: number, size: number, offset: number }
@@ -465,11 +465,11 @@ export class CLR {
 	Resources?:	Uint8Array;
 
 	constructor(pe: pe.PE, clr_data: Uint8Array) {
-		this.header		= binary.read(new binary.stream(clr_data), CLR_HEADER);
+		this.header		= bin.read(new bin.stream(clr_data), CLR_HEADER);
 		const meta_data	= pe.GetDataDir(this.header.MetaData);
-		const meta_root	= meta_data && binary.read(new binary.stream(meta_data.data), METADATA_ROOT);
+		const meta_root	= meta_data && bin.read(new bin.stream(meta_data.data), METADATA_ROOT);
 
-		if (meta_root?.Signature != binary.utils.stringCode('BSJB'))
+		if (meta_root?.Signature != bin.utils.stringCode('BSJB'))
 			throw new Error("Invalid CLR");
 
 		let 	table_data;
@@ -486,24 +486,24 @@ export class CLR {
 		}
 
 		if (table_data) {
-			const stream	= new binary.stream(table_data);
-			this.table_info	= binary.read(stream, CLR_TABLES);
+			const stream	= new bin.stream(table_data);
+			this.table_info	= bin.read(stream, CLR_TABLES);
 			const table_counts: number[] = [];
 
 			//read counts
-			for (let b = this.table_info.Valid; b; b = binary.utils.clearLowest(b)) {
-				const i = binary.utils.lowestSetIndex(b);
-				table_counts[i] = binary.UINT32_LE.get(stream);
+			for (let b = this.table_info.Valid; b; b = bin.utils.clearLowest(b)) {
+				const i = bin.utils.lowestSetIndex(b);
+				table_counts[i] = bin.UINT32_LE.get(stream);
 			}
 
 			this.raw 		= stream.remainder();
 			const stream1 	= new clr_dummy(this.table_info.HeapSizes, table_counts);
 			let offset 		= 0;
 
-			for (let b = this.table_info.Valid; b; b = binary.utils.clearLowest(b)) {
-				const i = binary.utils.lowestSetIndex(b) as TABLE;
+			for (let b = this.table_info.Valid; b; b = bin.utils.clearLowest(b)) {
+				const i = bin.utils.lowestSetIndex(b) as TABLE;
 				stream1.seek(0);
-				binary.read(stream1, TableReaders[i]);
+				bin.read(stream1, TableReaders[i]);
 				this.tables[i] = {offset, count: table_counts[i], size: stream1.tell()};
 				offset	+= this.tables[i]!.size * this.tables[i]!.count;
 			}
@@ -512,18 +512,18 @@ export class CLR {
 		}
 	}
 
-	getEntry<T extends TABLE>(t: T, i: number): binary.ReadType<typeof TableReaders[T]>;
+	getEntry<T extends TABLE>(t: T, i: number): bin.ReadType<typeof TableReaders[T]>;
 	getEntry(t: TABLE, i: number): any;
 	getEntry(t: TABLE, i: number) : any {
 		const table = this.tables[t];
 		if (table) {
 			const stream2 = new clr_stream(this.raw!, this.heaps, this.table_info!.HeapSizes, Object.values(this.tables).map(i => i.count));
 			stream2.seek(table.offset + i * table.size);
-			return binary.read(stream2, TableReaders[t]);
+			return bin.read(stream2, TableReaders[t]);
 		}
 	}
 
-	getTable<T extends TABLE>(t: T): binary.ReadType<typeof TableReaders[T]>[];
+	getTable<T extends TABLE>(t: T): bin.ReadType<typeof TableReaders[T]>[];
 	getTable(t: TABLE): any;
 	getTable(t: TABLE) {
 		const table = this.tables[t];
@@ -532,7 +532,7 @@ export class CLR {
 			stream2.seek(table.offset);
 			const result: any[] = [];
 			for (let i = 0; i < table.count; i++)
-				result.push(binary.read(stream2, TableReaders[t]));
+				result.push(bin.read(stream2, TableReaders[t]));
 			return result;
 		}
 	}
@@ -541,8 +541,8 @@ export class CLR {
 		if (this.Resources) {
 			for (const i of this.getTable(TABLE.ManifestResource)!) {
 				if (i.name == block) {
-					const data0 	= new binary.stream(this.Resources.subarray(i.data));
-					const size 		= binary.UINT32_LE.get(data0);
+					const data0 	= new bin.stream(this.Resources.subarray(i.data));
+					const size 		= bin.UINT32_LE.get(data0);
 					return getResources(data0.read_buffer(size));
 				}
 			}
@@ -557,8 +557,8 @@ export class CLR {
 		if (this.Resources) {
 			const result = {} as any;
 			for (const i of this.getTable(TABLE.ManifestResource)!) {
-				const data0 	= new binary.stream(this.Resources.subarray(i.data));
-				const size 		= binary.UINT32_LE.get(data0);
+				const data0 	= new bin.stream(this.Resources.subarray(i.data));
+				const size 		= bin.UINT32_LE.get(data0);
 				const resources = getResources(data0.read_buffer(size));
 				if (resources)
 					Object.assign(result, resources);
@@ -569,15 +569,15 @@ export class CLR {
 }
 
 function getResources(data: Uint8Array) {
-	const stream	= new binary.stream(data); 
-	const manager0 	= binary.read(stream, ResourceManagerHeader);
+	const stream	= new bin.stream(data); 
+	const manager0 	= bin.read(stream, ResourceManagerHeader);
 	if (manager0.magic == 0xBEEFCACE) {
-		const manager	= binary.read_more(stream, ResourceManager, manager0);
-		stream.align(8);
-		const hashes 	= binary.readn(stream, binary.UINT32_LE, manager.num_resources);
-		const offsets	= binary.readn(stream, binary.UINT32_LE, manager.num_resources);
-		const start		= binary.UINT32_LE.get(stream);
-		const entries 	= binary.readn(stream, ResourceEntry, manager.num_resources);
+		const manager	= bin.read_more(stream, ResourceManager, manager0);
+		bin.AlignType(8).get(stream);
+		const _hashes 	= bin.readn(stream, bin.UINT32_LE, manager.num_resources);
+		const _offsets	= bin.readn(stream, bin.UINT32_LE, manager.num_resources);
+		const start		= bin.UINT32_LE.get(stream);
+		const entries 	= bin.readn(stream, ResourceEntry, manager.num_resources);
 
 		const resources : Record<string, any> = {};
 		const decoder	= new TextDecoder('utf-8');
@@ -592,7 +592,7 @@ function getResources(data: Uint8Array) {
 }
 
 // hook into PE reader
-
+/*
 pe.DIRECTORIES.CLR_DESCRIPTOR.read = (pe: pe.PE, data: binary.MappedMemory) => {
 	function fix_names(table: any[]) {
 		if ('name' in table[0])
@@ -602,4 +602,14 @@ pe.DIRECTORIES.CLR_DESCRIPTOR.read = (pe: pe.PE, data: binary.MappedMemory) => {
 	const clr = new CLR(pe, data.data);
 	return Object.fromEntries(Object.entries(clr.tables).map(([k, v]) => [TABLE[+k], fix_names(clr.getTable(+k)!)]));
 };
+*/
+export function ReadCLR(pe: pe.PE, data: bin.MappedMemory) {
+	function fix_names(table: any[]) {
+		if ('name' in table[0])
+			return Object.fromEntries(table.map(i => [i.name, i]));
+		return table;
+	}
+	const clr = new CLR(pe, data.data);
+	return Object.fromEntries(Object.entries(clr.tables).map(([k, _]) => [TABLE[+k], fix_names(clr.getTable(+k)!)]));
+}
 

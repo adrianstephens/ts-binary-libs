@@ -1,4 +1,5 @@
-import * as binary from '@isopodlabs/binary';
+import * as bin from '@isopodlabs/binary';
+import { ReadCLR } from './clr';
 
 class MyDate extends Date {
 	constructor(x: number) { super(x * 1000); }
@@ -6,11 +7,11 @@ class MyDate extends Date {
 	toString()	{ return super.toString(); }
 }
 
-const uint16	= binary.UINT16_LE;
-const uint32	= binary.UINT32_LE;
-const uint64	= binary.UINT64_LE;
+const uint16	= bin.UINT16_LE;
+const uint32	= bin.UINT32_LE;
+const uint64	= bin.UINT64_LE;
 
-const TIMEDATE	= binary.as(uint32, MyDate);
+const TIMEDATE	= bin.as(uint32, MyDate);
 
 //-----------------------------------------------------------------------------
 //	COFF
@@ -39,7 +40,7 @@ const MACHINES: Record<string, number> = {
 	THUMB:		0x1c2,
 	WCEMIPSV2:	0x169,
 };
-const MACHINE = binary.asEnum(uint16, MACHINES);
+const MACHINE = bin.asEnum(uint16, MACHINES);
 
 const FILE_HEADER = {
 	Machine:				MACHINE,
@@ -96,48 +97,48 @@ const SECTION_CHARACTERISTICS = {
 	MEM_WRITE:				0x80000000,
 } as const;
 
-export class Section extends binary.ReadClass({
-	Name:					binary.StringType(8),
+export class Section extends bin.ReadClass({
+	Name:					bin.StringType(8),
 	VirtualSize:			uint32,
-	VirtualAddress:			binary.asHex(uint32),
+	VirtualAddress:			bin.asHex(uint32),
 	SizeOfRawData:			uint32,
-	PointerToRawData:		binary.asHex(uint32),
-	PointerToRelocations:	binary.asHex(uint32),
-	PointerToLinenumbers:	binary.asHex(uint32),
-	NumberOfRelocations:	binary.INT16_LE,
-	NumberOfLinenumbers:	binary.INT16_LE,
-	Characteristics:		binary.asFlags(uint32, SECTION_CHARACTERISTICS)
+	PointerToRawData:		bin.asHex(uint32),
+	PointerToRelocations:	bin.asHex(uint32),
+	PointerToLinenumbers:	bin.asHex(uint32),
+	NumberOfRelocations:	bin.INT16_LE,
+	NumberOfLinenumbers:	bin.INT16_LE,
+	Characteristics:		bin.asFlags(uint32, SECTION_CHARACTERISTICS)
 }) {
-	data?: binary.MappedMemory;
-	constructor(r: binary.stream) {
+	data?: bin.MappedMemory;
+	constructor(r: bin.stream) {
 		super(r);
 		try {
-			this.data = new binary.MappedMemory(r.buffer_at(+this.PointerToRawData, this.SizeOfRawData), +this.VirtualAddress, this.flags);
+			this.data = new bin.MappedMemory(r.buffer_at(+this.PointerToRawData, this.SizeOfRawData), BigInt(this.VirtualAddress.value), this.flags);
 		} catch (e) {
 			console.log(e);
 		}
 	}
 	get flags() {
-		return binary.MappedMemory.RELATIVE
-			| (this.Characteristics.MEM_READ	? binary.MappedMemory.READ 		: 0)
-			| (this.Characteristics.MEM_WRITE	? binary.MappedMemory.WRITE 	: 0)
-			| (this.Characteristics.MEM_EXECUTE	? binary.MappedMemory.EXECUTE	: 0);
+		return bin.MappedMemory.RELATIVE
+			| (this.Characteristics.MEM_READ	? bin.MappedMemory.READ 		: 0)
+			| (this.Characteristics.MEM_WRITE	? bin.MappedMemory.WRITE 	: 0)
+			| (this.Characteristics.MEM_EXECUTE	? bin.MappedMemory.EXECUTE	: 0);
 	}
 }
 
 export class COFF {
 	static check(data: Uint8Array): boolean {
-		const header = binary.read(new binary.stream(data), FILE_HEADER);
+		const header = bin.read(new bin.stream(data), FILE_HEADER);
 		return MACHINES[header.Machine] !== undefined;
 	}
 
-	header:		binary.ReadType<typeof FILE_HEADER>;
-	opt?:		binary.ReadType<typeof OPTIONAL_HEADER> & (binary.ReadType<typeof OPTIONAL_HEADER32> | binary.ReadType<typeof OPTIONAL_HEADER64>);
+	header:		bin.ReadType<typeof FILE_HEADER>;
+	opt?:		bin.ReadType<typeof OPTIONAL_HEADER> & (bin.ReadType<typeof OPTIONAL_HEADER32> | bin.ReadType<typeof OPTIONAL_HEADER64>);
 	sections:	Section[];
 
 	constructor(data: Uint8Array) {
-		const file	= new binary.stream(data);
-		this.header = binary.read(file, FILE_HEADER);
+		const file	= new bin.stream(data);
+		this.header = bin.read(file, FILE_HEADER);
 
 		if (this.header.SizeOfOptionalHeader) {
 			console.log("COFF: SizeOfOptionalHeader", this.header.SizeOfOptionalHeader);
@@ -163,17 +164,17 @@ const SYMBOL = {
 		Value: uint16,
 	//}
 	Type: uint16,
-	Symbol: binary.NullTerminatedStringType(),
-	Module: binary.NullTerminatedStringType(),
+	Symbol: bin.NullTerminatedStringType(),
+	Module: bin.NullTerminatedStringType(),
 };
 
-export class COFFSymbol extends binary.ReadClass(SYMBOL) {
+export class COFFSymbol extends bin.ReadClass(SYMBOL) {
 	static check(data: Uint8Array): boolean {
-		const test = binary.read(new binary.stream(data), SYMBOL);
+		const test = bin.read(new bin.stream(data), SYMBOL);
 		return test.a === 0 && test.b === 0xffff && test.c === 0 && test.Architecture != 'UNKNOWN';
 	}
 	constructor(data: Uint8Array) {
-		super(new binary.stream(data));
+		super(new bin.stream(data));
 	}
 }
 
@@ -181,27 +182,28 @@ export class COFFSymbol extends binary.ReadClass(SYMBOL) {
 //	PE
 //-----------------------------------------------------------------------------
 
-export class pe_stream extends binary.stream {
+export class pe_stream extends bin.stream {
 	constructor(public pe: PE, data: Uint8Array) {
 		super(data);
 	}
+	translate_rva(addr: number) { return this.pe.GetDataRVA(addr); }
 	get_rva()	{ return this.pe.GetDataRVA(uint32.get(this))?.data; }
 }
 
+const RVA_BLOB = {
+	get(s: pe_stream)	{ return s.get_rva(); },
+	put(_s: pe_stream)	{}
+};
 const RVA_STRING = {
-	get(s: pe_stream)	{ return binary.utils.decodeTextTo0(s.get_rva(), 'utf8'); },
+	get(s: pe_stream)	{ return bin.utils.decodeTextTo0(s.get_rva(), 'utf8'); },
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY16 = {
-	get(s: pe_stream)	{ return binary.utils.to16(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.utils.to16(s.get_rva()); },
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY32 = {
-	get(s: pe_stream)	{ return binary.utils.to32(s.get_rva()); },
-	put(_s: pe_stream)	{}
-};
-const RVA_ARRAY64 = {
-	get(s: pe_stream)	{ return binary.utils.to64(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.utils.to32(s.get_rva()); },
 	put(_s: pe_stream)	{}
 };
 
@@ -212,7 +214,7 @@ const DOS_HEADER = {
 	crlc:		uint16,
 	cparhdr:	uint16,
 	minalloc:	uint16,
-	maxalloc:	binary.asHex(uint16),
+	maxalloc:	bin.asHex(uint16),
 	ss:			uint16,
 	sp:			uint16,
 	csum:		uint16,
@@ -223,41 +225,47 @@ const DOS_HEADER = {
 };
 
 const EXE_HEADER = {
-	res:		binary.ArrayType(4, uint16),
+	res:		bin.ArrayType(4, uint16),
 	oemid:		uint16,
 	oeminfo:	uint16,
-	res2:		binary.ArrayType(10, uint16),
-	lfanew:		binary.INT32_LE,
+	res2:		bin.ArrayType(10, uint16),
+	lfanew:		bin.INT32_LE,
 };
 
 interface DirectoryInfo {
-	read?: (pe: PE, data: binary.MappedMemory) => any;
+	read: (pe: PE, data: bin.MappedMemory) => unknown;
 }
+const NoInfo: DirectoryInfo = {
+	read: (pe: PE, data: bin.MappedMemory) => data
+};
 
-export const DIRECTORIES : Record<string, DirectoryInfo> = {
+export const DIRECTORIES = {
 	EXPORT:			{read: (pe, data) => ReadExports(new pe_stream(pe, data.data)) },
 	IMPORT:			{read: (pe, data) => ReadImports(new pe_stream(pe, data.data)) },
-	RESOURCE:		{read: (pe, data) => ReadResourceDirectory(new binary.stream(data.data), data)},
-	EXCEPTION:		{},	// Exception Directory
-	SECURITY:		{},	// Security Directory
-	BASERELOC:		{},	// Base Relocation Table
-	DEBUG_DIR:		{},	// Debug Directory
-	ARCHITECTURE:	{},	// Architecture Specific Data
-	GLOBALPTR:		{},	// RVA of GP
-	TLS:			{},
-	LOAD_CONFIG:	{},	// Load Configuration Directory
-	BOUND_IMPORT:	{},	// Bound Import Directory in headers
-	IAT:			{},	// Import Address Table
-	DELAY_IMPORT:	{},
-	CLR_DESCRIPTOR:	{},
-};
+	RESOURCE:		{read: (pe, data) => ReadResourceDirectory(new pe_stream(pe, data.data))},
+	EXCEPTION:		NoInfo,	// Exception Directory
+	SECURITY:		NoInfo,	// Security Directory
+	BASERELOC:		NoInfo,	// Base Relocation Table
+	DEBUG_DIR:		NoInfo,	// Debug Directory
+	ARCHITECTURE:	NoInfo,	// Architecture Specific Data
+	GLOBALPTR:		NoInfo,	// RVA of GP
+	TLS:			NoInfo,
+	LOAD_CONFIG:	NoInfo,	// Load Configuration Directory
+	BOUND_IMPORT:	NoInfo,	// Bound Import Directory in headers
+	IAT:			NoInfo,	// Import Address Table
+	DELAY_IMPORT:	NoInfo,
+	CLR_DESCRIPTOR:	{read: ReadCLR },
+} as const satisfies Record<string, DirectoryInfo>;
+
+type DirectoryName	= keyof typeof DIRECTORIES;
+type DirectoryReadResult<T extends DirectoryName> = typeof DIRECTORIES[T] extends {read: (pe: PE, data: bin.MappedMemory) => infer R} ? R : bin.MappedMemory | undefined;
 
 export const DATA_DIRECTORY = {
 	VirtualAddress: 			uint32,
 	Size: 						uint32,
 };
 
-type Directory = binary.ReadType<typeof DATA_DIRECTORY>;
+type Directory		= bin.ReadType<typeof DATA_DIRECTORY>;
 
 const MAGIC = {
 	NT32:		0x10b,
@@ -281,19 +289,19 @@ const DLLCHARACTERISTICS = {
 };
 
 const OPTIONAL_HEADER = {
-	Magic:						binary.asEnum(uint16, MAGIC),
-	MajorLinkerVersion:			binary.UINT8,
-	MinorLinkerVersion:			binary.UINT8,
+	Magic:						bin.asEnum(uint16, MAGIC),
+	MajorLinkerVersion:			bin.UINT8,
+	MinorLinkerVersion:			bin.UINT8,
 	SizeOfCode:					uint32,
 	SizeOfInitializedData:		uint32,
 	SizeOfUninitializedData:	uint32,
-	AddressOfEntryPoint:		binary.asHex(uint32),
-	BaseOfCode:					binary.asHex(uint32),
+	AddressOfEntryPoint:		bin.asHex(uint32),
+	BaseOfCode:					bin.asHex(uint32),
 };
 
 const OPTIONAL_HEADER32 = {
-	BaseOfData: 				binary.asHex(uint32),
-	ImageBase:  				binary.asHex(uint32),
+	BaseOfData: 				bin.asHex(uint32),
+	ImageBase:  				bin.asHex(uint32),
 	SectionAlignment:   		uint32,
 	FileAlignment:  			uint32,
 	MajorOperatingSystemVersion:uint16,
@@ -307,17 +315,17 @@ const OPTIONAL_HEADER32 = {
 	SizeOfHeaders:  			uint32,
 	CheckSum:   				uint32,
 	Subsystem:  				uint16,
-	DllCharacteristics: 		binary.asFlags(uint16, DLLCHARACTERISTICS),
+	DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
 	SizeOfStackReserve: 		uint32,
 	SizeOfStackCommit:  		uint32,
 	SizeOfHeapReserve:  		uint32,
 	SizeOfHeapCommit:   		uint32,
 	LoaderFlags:				uint32,
-	DataDirectory:  			binary.objectWithNames(binary.ArrayType(uint32, DATA_DIRECTORY), binary.names(Object.keys(DIRECTORIES))),
+	DataDirectory:  			bin.objectWithNames(bin.ArrayType(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
 };
 
 const OPTIONAL_HEADER64 = {
-	ImageBase:  				binary.asHex(uint64),
+	ImageBase:  				bin.asHex(uint64),
 	SectionAlignment:   		uint32,
 	FileAlignment:  			uint32,
 	MajorOperatingSystemVersion:uint16,
@@ -331,39 +339,39 @@ const OPTIONAL_HEADER64 = {
 	SizeOfHeaders:  			uint32,
 	CheckSum:   				uint32,
 	Subsystem:  				uint16,
-	DllCharacteristics: 		binary.asFlags(uint16, DLLCHARACTERISTICS),
+	DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
 	SizeOfStackReserve: 		uint64,
 	SizeOfStackCommit:  		uint64,
 	SizeOfHeapReserve:  		uint64,
 	SizeOfHeapCommit:   		uint64,
 	LoaderFlags:				uint32,
-	DataDirectory:  			binary.objectWithNames(binary.ArrayType(uint32, DATA_DIRECTORY), binary.names(Object.keys(DIRECTORIES))),
+	DataDirectory:  			bin.objectWithNames(bin.ArrayType(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
 };
 
 export class PE {
 	static check(data: Uint8Array): boolean {
-		return uint16.get(new binary.stream(data)) === binary.utils.stringCode("MZ");
+		return uint16.get(new bin.stream(data)) === bin.utils.stringCode("MZ");
 	}
 
-	header:		binary.ReadType<typeof DOS_HEADER> & binary.ReadType<typeof EXE_HEADER>;
-	opt?:		binary.ReadType<typeof OPTIONAL_HEADER> & (binary.ReadType<typeof OPTIONAL_HEADER32> | binary.ReadType<typeof OPTIONAL_HEADER64>);
+	header:		bin.ReadType<typeof DOS_HEADER> & bin.ReadType<typeof EXE_HEADER>;
+	opt?:		bin.ReadType<typeof OPTIONAL_HEADER> & (bin.ReadType<typeof OPTIONAL_HEADER32> | bin.ReadType<typeof OPTIONAL_HEADER64>);
 	sections:	Section[];
 
 	constructor(data: Uint8Array) {
-		const file	= new binary.stream(data);
-		this.header	= binary.read(file, {...DOS_HEADER, ...EXE_HEADER});
+		const file	= new bin.stream(data);
+		this.header	= bin.read(file, {...DOS_HEADER, ...EXE_HEADER});
 
 		file.seek(this.header.lfanew);
-		if (uint32.get(file) == binary.utils.stringCode("PE\0\0")) {
-			const h = binary.read(file, FILE_HEADER);
+		if (uint32.get(file) == bin.utils.stringCode("PE\0\0")) {
+			const h = bin.read(file, FILE_HEADER);
 
 			if (h.SizeOfOptionalHeader) {
-				const opt	= new binary.stream(file.read_buffer(h.SizeOfOptionalHeader));
-				const opt1	= binary.read(opt, OPTIONAL_HEADER);
+				const opt	= new bin.stream(file.read_buffer(h.SizeOfOptionalHeader));
+				const opt1	= bin.read(opt, OPTIONAL_HEADER);
 				if (opt1.Magic == 'NT32')
-					this.opt = binary.read_more(opt, OPTIONAL_HEADER32, opt1);
+					this.opt = bin.read_more(opt, OPTIONAL_HEADER32, opt1);
 				else if (opt1.Magic == 'NT64')
-					this.opt = binary.read_more(opt, OPTIONAL_HEADER64, opt1);
+					this.opt = bin.read_more(opt, OPTIONAL_HEADER64, opt1);
 			}
 
 			this.sections = Array.from({length: h.NumberOfSections}, () => new Section(file));
@@ -393,7 +401,7 @@ export class PE {
 	GetDataRVA(rva: number, size?: number) {
 		const sect = this.FindSectionRVA(rva);
 		if (sect && sect.data)
-			return sect.data.at(rva, size);
+			return sect.data.at(BigInt(rva), size);
 	}
 	GetDataRaw(addr: number, size: number) {
 		const sect = this.FindSectionRaw(addr);
@@ -407,15 +415,16 @@ export class PE {
 			return this.GetDataRVA(dir.VirtualAddress, dir.Size);
 	}
 
-	ReadDirectory(name: string) {
+	ReadDirectory<T extends DirectoryName>(name: T) : DirectoryReadResult<T> {
 		const dir	= this.opt?.DataDirectory[name];
 		if (dir?.Size) {
 			const data 	= this.GetDataDir(dir);
 			const info	= DIRECTORIES[name];
-			if (data && info?.read)
-				return info.read(this, data);
-			return data;
+			if (data && 'read' in info && info.read)
+				return info.read(this, data) as DirectoryReadResult<T>;
+			return data as DirectoryReadResult<T>;
 		}
+		return undefined as DirectoryReadResult<T>;
 	}
 }
 
@@ -426,8 +435,8 @@ export class PE {
 const EXPORT_DIRECTORY = {
 	ExportFlags:	uint32,	// Reserved, must be 0.
 	TimeDateStamp:	TIMEDATE,			// The time and date that the export data was created.
-	MajorVersion:	binary.asHex(uint16),	// The major version number. The major and minor version numbers can be set by the user.
-	MinorVersion:	binary.asHex(uint16),	// The minor version number.
+	MajorVersion:	bin.asHex(uint16),	// The major version number. The major and minor version numbers can be set by the user.
+	MinorVersion:	bin.asHex(uint16),	// The minor version number.
 	DLLName:		RVA_STRING,			// The address of the ASCII string that contains the name of the DLL. This address is relative to the image base.
 	OrdinalBase:	uint32,				// The starting ordinal number for exports in this image. This field specifies the starting ordinal number for the export address table. It is usually set to 1.
 	NumberEntries:	uint32,				// The number of entries in the export address table.
@@ -444,7 +453,7 @@ interface ExportEntry {
 }
 
 export function ReadExports(file: pe_stream) {
-	const dir 		= binary.read(file, EXPORT_DIRECTORY);
+	const dir 		= bin.read(file, EXPORT_DIRECTORY);
 	const addresses	= dir.FunctionTable!;
 	const names		= dir.NameTable;
 	const ordinals	= dir.OrdinalTable;
@@ -454,7 +463,7 @@ export function ReadExports(file: pe_stream) {
 		const sect = file.pe.FindSectionRVA(addresses[i]);
 		if (sect) {
 			const ordinal	= (ordinals && i < dir.NumberNames ? ordinals[i] : i) + dir.OrdinalBase;
-			const name		= names && i < dir.NumberNames ? binary.utils.decodeTextTo0(file.pe.GetDataRVA(names[i])?.data, 'utf8') : '';
+			const name		= names && i < dir.NumberNames ? bin.utils.decodeTextTo0(file.pe.GetDataRVA(names[i])?.data, 'utf8') : '';
 			result.push({ordinal, name, address: addresses[i]});
 		}
 	}
@@ -475,12 +484,12 @@ export class DLLImports extends Array {}
 
 const RVA_ITA64 = {
 	get(s: pe_stream)	{ 
-		const r = binary.utils.to64(s.get_rva());
+		const r = bin.utils.to64(s.get_rva());
 		if (r) {
 			const result = Array.from(r.subarray(0, r.indexOf(0n)), i =>
 				i >> 63n
 					? `ordinal_${i - (1n << 63n)}`
-					: binary.utils.decodeTextTo0(s.pe.GetDataRVA(Number(i))?.data.subarray(2), 'utf8')
+					: bin.utils.decodeTextTo0(s.pe.GetDataRVA(Number(i))?.data.subarray(2), 'utf8')
 			);
 			Object.setPrototypeOf(result, DLLImports.prototype);
 			return result;
@@ -500,7 +509,7 @@ const IMPORT_DESCRIPTOR = {
 export function ReadImports(file: pe_stream) {
 	const result: [string, any][] = [];
 	while (file.remaining()) {
-		const r = binary.read(file, IMPORT_DESCRIPTOR);
+		const r = bin.read(file, IMPORT_DESCRIPTOR);
 		if (!r.Characteristics)
 			break;
 		result.push([r.DllName, r.FirstThunk]);
@@ -512,16 +521,14 @@ export function ReadImports(file: pe_stream) {
 //	resources
 //-----------------------------------------------------------------------------
 
-class RESOURCE_DATA_ENTRY extends binary.ReadClass({
-	OffsetToData:	uint32,
+class RESOURCE_DATA_ENTRY extends bin.ReadClass({
+	Data:			RVA_BLOB,
 	Size:			uint32,
 	CodePage:		uint32,
 	Reserved:		uint32,
 }) {
-	data:			Uint8Array;
-	constructor(file: binary.stream, data: binary.MappedMemory) {
-		super(file);
-		this.data	= data.slice(this.OffsetToData, this.OffsetToData + this.Size).data;
+	get data(): Uint8Array {
+		return this.Data!.slice(0, this.Size);
 	}
 }
 
@@ -532,7 +539,7 @@ const RESOURCE_DIRECTORY = {
 	MinorVersion:			uint16,
 	NumberOfNamedEntries:	uint16,
 	NumberOfIdEntries:		uint16,
-	entries:				binary.ArrayType(s => s.obj.NumberOfNamedEntries + s.obj.NumberOfIdEntries, {
+	entries:				bin.ArrayType(s => s.obj.NumberOfNamedEntries + s.obj.NumberOfIdEntries, {
 		u0: uint32,
 		u1: uint32,
 	})
@@ -564,9 +571,9 @@ const IRT = {
 	241:'TOOLBAR',
 } as const;
 
-export function ReadResourceDirectory(file: binary.stream, data: binary.MappedMemory, type = 0) {
-	const dir 		= binary.read(file, RESOURCE_DIRECTORY);
-	const id_type	= binary.StringType(uint16, 'utf16le');
+export function ReadResourceDirectory(file: pe_stream, type = 0) {
+	const dir 		= bin.read(file, RESOURCE_DIRECTORY);
+	const id_type	= bin.StringType(uint16, 'utf16le');
 	const topbit	= 0x80000000;
 	const result : Record<string, any> = {};
 
@@ -575,8 +582,8 @@ export function ReadResourceDirectory(file: binary.stream, data: binary.MappedMe
 		
 		file.seek(i.u1 & ~topbit);
 		result[id]	= i.u1 & topbit
-			? ReadResourceDirectory(file, data, type || i.u0)
-			: new RESOURCE_DATA_ENTRY(file, data);
+			? ReadResourceDirectory(file, type || i.u0)
+			: new RESOURCE_DATA_ENTRY(file);
 	}
 	return result;
 }

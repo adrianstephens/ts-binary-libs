@@ -1,4 +1,4 @@
-import * as binary from '@isopodlabs/binary';
+import * as bin from '@isopodlabs/binary';
 import { promises as fs } from 'fs';
 
 const enum SecID {
@@ -99,25 +99,25 @@ class FAT {
 
 }
 
-export class Header extends binary.Class({
-	magic:			binary.UINT64_BE,
-	id:				binary.Buffer(16),
-	revision:		binary.UINT16_LE,
-	version:		binary.UINT16_LE,
-	byteorder:		binary.UINT16_LE,
-	sector_shift:	binary.UINT16_LE,
-	mini_shift:		binary.UINT16_LE,
-	unused1:		binary.SkipType(6),
-	num_directory:	binary.UINT32_LE,
-	num_fat:		binary.UINT32_LE,
-	first_directory:binary.UINT32_LE,
-	transaction:	binary.SkipType(4),	//must be 0
-	mini_cutoff:	binary.UINT32_LE,
-	first_mini:		binary.UINT32_LE,
-	num_mini:		binary.UINT32_LE,
-	first_difat:	binary.UINT32_LE,
-	num_difat:		binary.UINT32_LE,
-	difat:			binary.Buffer(436),
+export class Header extends bin.Class({
+	magic:			bin.UINT64_BE,
+	id:				bin.Buffer(16),
+	revision:		bin.UINT16_LE,
+	version:		bin.UINT16_LE,
+	byteorder:		bin.UINT16_LE,
+	sector_shift:	bin.UINT16_LE,
+	mini_shift:		bin.UINT16_LE,
+	unused1:		bin.SkipType(6),
+	num_directory:	bin.UINT32_LE,
+	num_fat:		bin.UINT32_LE,
+	first_directory:bin.UINT32_LE,
+	transaction:	bin.SkipType(4),	//must be 0
+	mini_cutoff:	bin.UINT32_LE,
+	first_mini:		bin.UINT32_LE,
+	num_mini:		bin.UINT32_LE,
+	first_difat:	bin.UINT32_LE,
+	num_difat:		bin.UINT32_LE,
+	difat:			bin.Buffer(436),
 }) {
 	sector_size()				{ return 1 << this.sector_shift; }
 	use_mini(size: number)		{ return size < this.mini_cutoff; }
@@ -137,23 +137,23 @@ const COLOUR = {
 	RED: 0, BLACK: 1
 } as const;
 */
-class DirEntry  extends binary.Class({
-	name:			binary.StringType(32, 'utf16le'),
-	name_size:		binary.UINT16_LE,
-	type:			binary.UINT8,
-	colour:			binary.UINT8,
-	left:			binary.INT32_LE,
-	right:			binary.INT32_LE,
-	root:			binary.INT32_LE,
-	guid:			binary.Buffer(16),
-	flags:			binary.UINT32_LE,
-	creation:		binary.UINT64_LE,
-	modification:	binary.UINT64_LE,
-	sec_id:			binary.INT32_LE,
-	size:			binary.UINT32_LE,
-	unused:			binary.UINT32_LE
+class DirEntry  extends bin.Class({
+	name:			bin.StringType(32, 'utf16le'),
+	name_size:		bin.UINT16_LE,
+	type:			bin.UINT8,
+	colour:			bin.UINT8,
+	left:			bin.INT32_LE,
+	right:			bin.INT32_LE,
+	root:			bin.INT32_LE,
+	guid:			bin.Buffer(16),
+	flags:			bin.UINT32_LE,
+	creation:		bin.UINT64_LE,
+	modification:	bin.UINT64_LE,
+	sec_id:			bin.INT32_LE,
+	size:			bin.UINT32_LE,
+	unused:			bin.UINT32_LE
 }) {
-	constructor(public index: number, r: binary.stream) {
+	constructor(public index: number, r: bin.stream) {
 		super(r);
 		this.name = this.name.substring(0, this.name_size / 2 - 1);
 	}
@@ -175,7 +175,7 @@ class Master {
 		let		num		= header.num_difat;
 		let		m_size	= 109 + (num << (shift - 2));
 		this.difat		= new Int32Array(m_size);
-		binary.utils.to8(this.difat).set(header.difat, 0);
+		bin.utils.to8(this.difat).set(header.difat, 0);
 
 		let 	sect	= header.first_difat;
 		let 	p		= 109 * 4;
@@ -183,7 +183,7 @@ class Master {
 			const data	= sectors.subarray(sect << shift, (sect + 1) << shift);
 			const end	= data.length - 4;
 			sect 		= new DataView(data.buffer).getUint32(end);
-			binary.utils.to8(this.difat).set(data.subarray(0, end), p);
+			bin.utils.to8(this.difat).set(data.subarray(0, end), p);
 			p += end;
 		}
 
@@ -194,13 +194,13 @@ class Master {
 
 		Array.from(this.difat.subarray(0, m_size)).forEach((id, index) => {
 			const data	= sectors.subarray(id << shift, (id + 1) << shift);
-			binary.utils.to8(this.fat.fat).set(data, index << shift);
+			bin.utils.to8(this.fat.fat).set(data, index << shift);
 		});
 
-		const	root	= new DirEntry(0, new binary.stream(sectors.subarray(header.first_directory << shift)));
+		const	root	= new DirEntry(0, new bin.stream(sectors.subarray(header.first_directory << shift)));
 		this.mini_chain = this.fat.get_chain(root.sec_id);
 		this.mini_fat	= new FAT(header.num_mini << (shift - 2), header.mini_shift, root.load(this.fat));
-		this.fat.read(header.first_mini, binary.utils.to8(this.mini_fat.fat));
+		this.fat.read(header.first_mini, bin.utils.to8(this.mini_fat.fat));
 	}
 
 	get_fat(mini: boolean) {
@@ -254,7 +254,7 @@ export class Reader extends Master {
 
 		this.entry_chain	= this.fat.get_chain(header.first_directory);
 		const 	dir_buff 	= this.fat.read_chain_alloc(this.entry_chain);
-		const 	r2			= new binary.stream(dir_buff);
+		const 	r2			= new bin.stream(dir_buff);
 		for (let i = 0; i < dir_buff.length / 128; i++)
 			this.entries[i] = new DirEntry(i, r2.seek(i * 128));
 	}
@@ -306,7 +306,7 @@ export class Reader extends Master {
 			e.sec_id = chain[0];
 
 			const dest = this.fat.dirty_chain_part(this.entry_chain, e.index * 128);
-			e.write(new binary.stream(dest));
+			e.write(new bin.stream(dest));
 		}
 
 		fat2.write_chain(chain, data);

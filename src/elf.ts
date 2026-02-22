@@ -1,4 +1,4 @@
-import * as binary from '@isopodlabs/binary';
+import * as bin from '@isopodlabs/binary';
 
 //--------------------	FILE HEADER
 
@@ -22,15 +22,15 @@ const OSABI = {
 
 const Ident = {
 	//enum {MAGIC = '\177ELF'};
-	magic:		binary.UINT32_LE,
-	file_class:	binary.asEnum(binary.UINT8, CLASS),
-	encoding:	binary.asEnum(binary.UINT8, DATA),
-	version:	binary.UINT8,
-	_: binary.If(s => s.obj.file_class === 'CLASS64', {
+	magic:		bin.UINT32_LE,
+	file_class:	bin.asEnum(bin.UINT8, CLASS),
+	encoding:	bin.asEnum(bin.UINT8, DATA),
+	version:	bin.UINT8,
+	_: bin.If(s => s.obj.file_class === 'CLASS64', {
 		//64 bit only
-		osabi: 		binary.asEnum(binary.UINT8, OSABI),
-		abiversion: binary.UINT8,
-		pad:		binary.ArrayType(7, binary.UINT8),
+		osabi: 		bin.asEnum(bin.UINT8, OSABI),
+		abiversion: bin.UINT8,
+		pad:		bin.ArrayType(7, bin.UINT8),
 	})
 };
 
@@ -228,8 +228,8 @@ const SHF = {
 
 //--------------------	SYMBOLS
 
-const ST_INFO = binary.BitFields({
-	type:		[4, binary.Enum({
+const ST_INFO = bin.BitFields({
+	type:		[4, bin.Enum({
 		NOTYPE:		0,				//The symbol's type is not specified
 		OBJECT:		1,				//associated with a data object
 		FUNC:		2,				//associated with a function
@@ -241,7 +241,7 @@ const ST_INFO = binary.BitFields({
 		HIPROC:		15,
 	
 	})],
-	binding:	[4, binary.Enum({
+	binding:	[4, bin.Enum({
 		LOCAL:		0,				//not visible outside the object file containing their definition
 		GLOBAL:		1,				//visible to all object files being combined
 		WEAK:		2,				//like global symbols, but lower precedence
@@ -252,8 +252,8 @@ const ST_INFO = binary.BitFields({
 	})],
 });
 
-const ST_OTHER = binary.BitFields({
-	visibility:	[2, binary.Enum({
+const ST_OTHER = bin.BitFields({
+	visibility:	[2, bin.Enum({
 		DEFAULT:	0,
 		HIDDEN:		1,
 		PROTECTED:	2,
@@ -613,17 +613,17 @@ const RELOC = {
 //	ELF
 //-----------------------------------------------------------------------------
 
-function Pair(top: binary.Type, bottom: binary.Type, be: boolean) {
+function Pair(top: bin.Type, bottom: bin.Type, be: boolean) {
 	return be ? {top, bottom} : {bottom, top};
 }
-function readDataAs<T extends binary.Type>(data: binary.MappedMemory | undefined, type: T) {
+function readDataAs<T extends bin.Type>(data: bin.MappedMemory | undefined, type: T) {
 	if (data)
-		return binary.RemainingArrayType(type).get(new binary.stream(data.data));
+		return bin.RemainingArrayType(type).get(new bin.stream(data.data));
 }
 
 export class ELFFile {
 	static check(data: Uint8Array): boolean {
-		return binary.utils.decodeText(data.subarray(0, 4), 'utf8') === '\x7fELF';
+		return bin.utils.decodeText(data.subarray(0, 4), 'utf8') === '\x7fELF';
 	}
 
 	segments;
@@ -636,28 +636,28 @@ export class ELFFile {
 	getDynamicSymbols;
 
 	constructor(data: Uint8Array) {
-		const s		= new binary.stream(data);
-		const ident = binary.read(s, Ident);
-		if (ident.magic != binary.utils.stringCode("\x7fELF"))
+		const s		= new bin.stream(data);
+		const ident = bin.read(s, Ident);
+		if (ident.magic != bin.utils.stringCode("\x7fELF"))
 			throw new Error('Not an ELF file');
 
 		const	be		= ident.encoding	== 'MSB';
 		const	bits	= ident.file_class	== 'CLASS32' ? 32 : 64;
 
-		const	Half	= binary.UINT(16, be);
-		const	Sword	= binary.INT(32, be);
-		const	Word	= binary.UINT(32, be);
+		const	Half	= bin.UINT(16, be);
+		const	Sword	= bin.INT(32, be);
+		const	Word	= bin.UINT(32, be);
 		
-		const	Addr	= binary.asHex(binary.UINT(bits, be));
-		const	Off		= binary.UINT(bits, be);
-		const	Xword	= binary.INT(bits, be);
-		const	Sxword	= binary.UINT(bits, be);
-		const	PairHalf= binary.UINT(bits == 32 ? 8 : 32, be);
+		const	Addr	= bin.asHex(bin.UINT(bits, be));
+		const	Off		= bin.UINT(bits, be);
+		const	Xword	= bin.INT(bits, be);
+		const	Sxword	= bin.UINT(bits, be);
+		const	PairHalf= bin.UINT(bits == 32 ? 8 : 32, be);
 
 		const Ehdr = {
-			e_type:			binary.asEnum(Half, ET),		//Object file type (ET_..)
-			e_machine:		binary.asEnum(Half, EM),		//specifies the required architecture (EM_...)
-			e_version:		binary.asEnum(Word, EV),		//object file version (EV_...)
+			e_type:			bin.asEnum(Half, ET),		//Object file type (ET_..)
+			e_machine:		bin.asEnum(Half, EM),		//specifies the required architecture (EM_...)
+			e_version:		bin.asEnum(Word, EV),		//object file version (EV_...)
 			e_entry:		Addr,		//run address
 			e_phoff:		Off,		//program header table's file offset
 			e_shoff:		Off,		//section header table's file offset
@@ -670,18 +670,18 @@ export class ELFFile {
 			e_shstrndx:		Half,		//section header table index of section name string table
 		};
 
-		class Phdr extends binary.ReadClass(bits == 32 ? {
-			p_type:			binary.asEnum(Word, PT),		//kind of segment this array element describes
+		class Phdr extends bin.ReadClass(bits == 32 ? {
+			p_type:			bin.asEnum(Word, PT),		//kind of segment this array element describes
 			p_offset:		Off,		//offset from the beginning of the file at which the first byte of the segment resides
 			p_vaddr:		Addr,		//virtual address at which the first byte of the segment resides in memory
 			p_paddr:		Addr,		//segment's physical address (when relevant)
 			p_filesz:		Word,		//number of bytes in the file image of the segment
 			p_memsz:		Word,		//number of bytes in the memory image of the segment
-			p_flags:		binary.asFlags(Word, PF),
+			p_flags:		bin.asFlags(Word, PF),
 			p_align:		Word,
 		} : {	
-			p_type:			binary.asEnum(Word, PT),
-			p_flags:		binary.asFlags(Word, PF),
+			p_type:			bin.asEnum(Word, PT),
+			p_flags:		bin.asFlags(Word, PF),
 			p_offset:		Off,
 			p_vaddr:		Addr,
 			p_paddr:		Addr,
@@ -689,21 +689,21 @@ export class ELFFile {
 			p_memsz:		Xword,
 			p_align:		Xword,
 		}) {
-			data: binary.MappedMemory;
-			constructor(s: binary.stream) {
+			data: bin.MappedMemory;
+			constructor(s: bin.stream) {
 				super(s);
-				const flags = binary.MappedMemory.RELATIVE
-							| (this.p_flags.R ? binary.MappedMemory.READ : 0)
-							| (this.p_flags.W ? binary.MappedMemory.WRITE : 0)
-							| (this.p_flags.X ? binary.MappedMemory.EXECUTE : 0);
-				this.data = new binary.MappedMemory(s.buffer_at(Number(this.p_offset), Number(this.p_filesz)), Number(this.p_vaddr), flags);
+				const flags = bin.MappedMemory.RELATIVE
+							| (this.p_flags.R ? bin.MappedMemory.READ : 0)
+							| (this.p_flags.W ? bin.MappedMemory.WRITE : 0)
+							| (this.p_flags.X ? bin.MappedMemory.EXECUTE : 0);
+				this.data = new bin.MappedMemory(s.buffer_at(Number(this.p_offset), Number(this.p_filesz)), BigInt(this.p_vaddr.value), flags);
 			}
 		}
 
-		class Shdr extends binary.ReadClass({
+		class Shdr extends bin.ReadClass({
 			sh_name:		Word,		//name of the section
-			sh_type:		binary.asEnum(Word, SHT),		//categorizes the section's contents and semantics
-			sh_flags:		binary.asFlags(Xword, SHF),		//miscellaneous attributes
+			sh_type:		bin.asEnum(Word, SHT),		//categorizes the section's contents and semantics
+			sh_flags:		bin.asFlags(Xword, SHF),		//miscellaneous attributes
 			sh_addr:		Addr,		//address
 			sh_offset:		Off,		//file offset to first byte in section
 			sh_size:		Off,		//section's size in bytes
@@ -712,18 +712,18 @@ export class ELFFile {
 			sh_addralign:	Off,		//address alignment constraints
 			sh_entsize:		Off,		//size in bytes of each entry (when appropriate)
 		}) {
-			data: binary.MappedMemory;
-			constructor(s: binary.stream) {
+			data: bin.MappedMemory;
+			constructor(s: bin.stream) {
 				super(s);
-				const flags = binary.MappedMemory.RELATIVE | binary.MappedMemory.READ
-							| (this.sh_flags.WRITE ? binary.MappedMemory.WRITE : 0)
-							| (this.sh_flags.EXECINSTR ? binary.MappedMemory.EXECUTE : 0);
+				const flags = bin.MappedMemory.RELATIVE | bin.MappedMemory.READ
+							| (this.sh_flags.WRITE ? bin.MappedMemory.WRITE : 0)
+							| (this.sh_flags.EXECINSTR ? bin.MappedMemory.EXECUTE : 0);
 				const buffer = this.sh_type === 'NOBITS' ? new Uint8Array(0) : s.buffer_at(Number(this.sh_offset), Number(this.sh_size));
-				this.data = new binary.MappedMemory(buffer, Number(this.sh_addr), flags);
+				this.data = new bin.MappedMemory(buffer, BigInt(this.sh_addr.value), flags);
 			}
 		}
 
-		const	h = binary.read(s, Ehdr);
+		const	h = bin.read(s, Ehdr);
 		this.header = h;
 
 		s.seek(Number(h.e_phoff));
@@ -737,15 +737,15 @@ export class ELFFile {
 
 		//set section names
 		const shnames	= sh[h.e_shstrndx].data.data;
-		this.sections	= sh.map(i => [binary.utils.decodeTextTo0(shnames.subarray(i.sh_name), 'utf8'), i] as [string, typeof i]);
+		this.sections	= sh.map(i => [bin.utils.decodeTextTo0(shnames.subarray(i.sh_name), 'utf8'), i] as [string, typeof i]);
 
 		const Dyn = {
-			d_tag:	binary.asEnum(Sword, DT_TAG),
+			d_tag:	bin.asEnum(Sword, DT_TAG),
 			d_val:	Xword,
 		};
 		const Rel = {
 			r_offset:	Addr,
-			r_info:		Pair(binary.asEnum(PairHalf, RELOC[h.e_machine as keyof typeof RELOC]), PairHalf, be),
+			r_info:		Pair(bin.asEnum(PairHalf, RELOC[h.e_machine as keyof typeof RELOC]), PairHalf, be),
 		};
 		const Rela =  {
 			...Rel,
@@ -756,18 +756,18 @@ export class ELFFile {
 		this.getRelA	= () => readDataAs(sh.find(i => i.sh_type === 'RELA')?.data, Rela);
 
 		const Sym = {
-			data:		binary.DontRead<binary.MappedMemory>(),
+			data:		bin.DontRead<bin.MappedMemory>(),
 			st_name:	Word,			//index into the object file's symbol string table
 			...(bits === 32 ? {
 				st_value:	Addr,			//value of the associated symbol
 				st_size:	Word,			//associated size
-				st_info:	binary.as(binary.UINT8, ST_INFO),	//symbol's type and binding attributes
-				st_other:	binary.as(binary.UINT8, ST_OTHER),
-				st_shndx:	binary.asEnum(Half, SHN),			//section header table index
+				st_info:	bin.as(bin.UINT8, ST_INFO),	//symbol's type and binding attributes
+				st_other:	bin.as(bin.UINT8, ST_OTHER),
+				st_shndx:	bin.asEnum(Half, SHN),			//section header table index
 			}: {
-				st_info:	binary.as(binary.UINT8, ST_INFO),
-				st_other:	binary.as(binary.UINT8, ST_OTHER),
-				st_shndx:	binary.asEnum(Half, SHN),
+				st_info:	bin.as(bin.UINT8, ST_INFO),
+				st_other:	bin.as(bin.UINT8, ST_OTHER),
+				st_shndx:	bin.asEnum(Half, SHN),
 				st_value:	Addr,
 				st_size:	Off,
 			})
@@ -782,10 +782,10 @@ export class ELFFile {
 					if (+sym.st_shndx) {
 						const section = sh[+sym.st_shndx];
 						const offset = Number(sym.st_value.value) - Number(section.sh_addr.value);
-						const flags	= sym.st_info.type === 'FUNC' ? section.data.flags : section.data.flags & ~binary.MappedMemory.EXECUTE;
-						sym.data = new binary.MappedMemory(section.data.data.subarray(offset, offset + Number(sym.st_size)), Number(sym.st_value.value), flags);
+						const flags	= sym.st_info.type === 'FUNC' ? section.data.flags : section.data.flags & ~bin.MappedMemory.EXECUTE;
+						sym.data = new bin.MappedMemory(section.data.data.subarray(offset, offset + Number(sym.st_size)), BigInt(sym.st_value.value), flags);
 					}
-					return [binary.utils.decodeTextTo0(names.subarray(sym.st_name), 'utf8'), sym] as [string, typeof sym];
+					return [bin.utils.decodeTextTo0(names.subarray(sym.st_name), 'utf8'), sym] as [string, typeof sym];
 				});
 			}
 		}

@@ -1,7 +1,7 @@
-import * as binary from '@isopodlabs/binary';
+import * as bin from '@isopodlabs/binary';
 
-class mach_stream extends binary.endianStream {
-	constructor(public base: Uint8Array, data: Uint8Array, be: boolean, public memflags: number, public mem?: binary.memory) { super(data, be); }
+class mach_stream extends bin.endianStream {
+	constructor(public base: Uint8Array, data: Uint8Array, be: boolean, public memflags: number, public mem?: bin.memory) { super(data, be); }
 	subdata(offset: number, size?: number) {
 		return this.base.subarray(offset, size && offset + size);
 	}
@@ -13,12 +13,12 @@ class mach_stream extends binary.endianStream {
 	}
 }
 
-const uint16	= binary.UINT16;
-const uint32	= binary.UINT32;
-const uint64	= binary.UINT64;
-const int32		= binary.INT32;
-const xint32	= binary.asHex(uint32);
-const xint64	= binary.asHex(uint64);
+const uint16	= bin.UINT16;
+const uint32	= bin.UINT32;
+const uint64	= bin.UINT64;
+const int32		= bin.INT32;
+const xint32	= bin.asHex(uint32);
+const xint64	= bin.asHex(uint64);
 
 const FILETYPE = {
 	OBJECT:			1,	// Relocatable object file
@@ -218,26 +218,26 @@ const HEADER_FLAGS = {
 
 const header = {
 	magic:		uint32,			// mach magic number identifier
-	cputype:	binary.as(uint32, binary.Enum(CPU_TYPE)),
-	cpusubtype:	binary.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
-	filetype:	binary.as(uint32, binary.Enum(FILETYPE)),
+	cputype:	bin.as(uint32, bin.Enum(CPU_TYPE)),
+	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
+	filetype:	bin.as(uint32, bin.Enum(FILETYPE)),
 	ncmds:		uint32,			// number of load commands
 	sizeofcmds:	uint32,			// the size of all the load commands
-	flags:		binary.as(uint32, binary.Flags(HEADER_FLAGS, true))
+	flags:		bin.as(uint32, bin.Flags(HEADER_FLAGS, true))
 };
 
 const fat_arch = {
-	cputype:	 	binary.as(uint32, binary.Enum(CPU_TYPE)),
-	cpusubtype:	binary.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
-	offset:		binary.UINT32_BE,		// file offset to this object file
-	size:		binary.UINT32_BE,		// size of this object file
-	align:		binary.UINT32_BE,		// alignment as a power of 2
-	contents:	binary.DontRead<MachFile>(),
+	cputype:	 	bin.as(uint32, bin.Enum(CPU_TYPE)),
+	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
+	offset:		bin.UINT32_BE,		// file offset to this object file
+	size:		bin.UINT32_BE,		// size of this object file
+	align:		bin.UINT32_BE,		// alignment as a power of 2
+	contents:	bin.DontRead<MachFile>(),
 };
 
 const fat_header = {
 	magic:		uint32,		// FAT_MAGIC
-	archs:		binary.ArrayType(uint32, fat_arch)
+	archs:		bin.ArrayType(uint32, fat_arch)
 };
 
 const REQ_DYLD = 0x80000000;
@@ -298,9 +298,9 @@ export enum CMD {
 };
 
 const str = {
-	get(s: binary.stream) {
+	get(s: bin.stream) {
 		const off = uint32.get(s);	// offset to the string
-		return binary.utils.decodeTextTo0(s.buffer_at(off - 8), 'utf8');
+		return bin.utils.decodeTextTo0(s.buffer_at(off - 8), 'utf8');
 	}
 };
 
@@ -318,45 +318,45 @@ const blob = {
 	}
 };
 
-function blobT<T extends binary.TypeReader>(type: T) {
+function blobT<T extends bin.TypeReader>(type: T) {
 	return {
 		get(s: mach_stream) {
 			const offset	= uint32.get(s);
 			const size		= uint32.get(s);
 			return {
 				data: s.subdata(offset, size),
-				contents: binary.read(s.substream(offset, size), type)
+				contents: bin.read(s.substream(offset, size), type)
 			};
 		}
 	};
 }
 
-function blobArray<T extends binary.Type>(type: T) {
-	return blobT(binary.RemainingArrayType(type));
+function blobArray<T extends bin.Type>(type: T) {
+	return blobT(bin.RemainingArrayType(type));
 }
 
 
-function count_table<T extends binary.TypeReader>(type: T) {
+function count_table<T extends bin.TypeReader>(type: T) {
 	return {
 		get(s: mach_stream) {
 			const offset	= uint32.get(s);
 			const count		= uint32.get(s);
 			if (count)
-				return binary.readn(s.substream(offset), type, count);
+				return bin.readn(s.substream(offset), type, count);
 		}
 	};
 }
 
-const fixed_string16	= binary.StringType(16);
-const version			= binary.asFlags(uint32, {major: 0xffff0000, minor: 0xff00, patch: 0xff}, false);
+const fixed_string16	= bin.StringType(16);
+const version			= bin.asFlags(uint32, {major: 0xffff0000, minor: 0xff00, patch: 0xff}, false);
 
 const command = {
-	cmd:		binary.as(uint32, v => v as CMD),
+	cmd:		bin.as(uint32, v => v as CMD),
 	cmdsize:	uint32,
 };
 
-const SECTION_FLAGS = binary.BitFields({
-	TYPE: [8, binary.Enum({
+const SECTION_FLAGS = bin.BitFields({
+	TYPE: [8, bin.Enum({
 		REGULAR:							0x0,	// regular section
 		ZEROFILL:							0x1,	// zero fill on demand section
 		CSTRING_LITERALS:					0x2,	// section with only literal C strings
@@ -381,13 +381,13 @@ const SECTION_FLAGS = binary.BitFields({
 		THREAD_LOCAL_VARIABLE_POINTERS:		0x14,	// pointers to TLV descriptors
 		THREAD_LOCAL_INIT_FUNCTION_POINTERS:0x15,	// functions to call to initialize TLV values
 	})],
-	ATTRIBUTES: [24, binary.BitFields({
-		SYS: [16,	binary.Flags({
+	ATTRIBUTES: [24, bin.BitFields({
+		SYS: [16,	bin.Flags({
 			SOME_INSTRUCTIONS: 		0x0004,	// section contains some machine instructions
 			EXT_RELOC: 				0x0002,	// section has external relocation entries
 			LOC_RELOC: 				0x0001,	// section has local relocation entries
 		}, true)],
-		USR: [8, binary.Flags({
+		USR: [8, bin.Flags({
 			PURE_INSTRUCTIONS:		0x80,	// section contains only true machine instructions
 			NO_TOC:					0x40,	// section contains coalesced symbols that are not to be in a ranlib table of contents
 			STRIP_STATIC_SYMS:		0x20,	// ok to strip static symbols in this section in files with the MH_DYLDLINK flag
@@ -400,9 +400,9 @@ const SECTION_FLAGS = binary.BitFields({
 });
 
 function section(bits: 32|64) {
-	const type		= binary.asHex(binary.UINT(bits));
+	const type		= bin.asHex(bin.UINT(bits));
 
-	class Section extends binary.Class({
+	class Section extends bin.Class({
 		//data:		binary.DontRead<binary.utils.MappedMemory>(),
 		sectname: 	fixed_string16,
 		segname: 	fixed_string16,
@@ -412,18 +412,18 @@ function section(bits: 32|64) {
 		align:		uint32,		// section alignment (power of 2)
 		reloff:		xint32,		// file offset of relocation entries
 		nreloc:		uint32,		// number of relocation entries
-		flags:		binary.as(uint32, SECTION_FLAGS),	// flags (section type and attributes)
+		flags:		bin.as(uint32, SECTION_FLAGS),	// flags (section type and attributes)
 		reserved1:	uint32,		// reserved (for offset or index)
 		reserved2:	uint32,		// reserved (for count or sizeof)
-		_:			binary.AlignType(bits / 8)
+		_:			bin.AlignType(bits / 8)
 	}) {
-		data:	Promise<binary.MappedMemory>;
+		data:	Promise<bin.MappedMemory>;
 		constructor(s: mach_stream) {
 			super(s);
-			const prot	= this.flags.ATTRIBUTES.SYS.SOME_INSTRUCTIONS ? binary.MappedMemory.EXECUTE | s.memflags : s.memflags;
+			const prot	= this.flags.ATTRIBUTES.SYS.SOME_INSTRUCTIONS ? bin.MappedMemory.EXECUTE | s.memflags : s.memflags;
 			this.data 	= (async () =>
 				//new binary.utils.MappedMemory(await s.file.get(BigInt(this.addr), Number(this.size)), Number(this.addr), prot)
-				new binary.MappedMemory(s.subdata(+this.offset, Number(this.size)), Number(this.addr), prot)
+				new bin.MappedMemory(s.subdata(+this.offset, Number(this.size)), BigInt(this.addr.value), prot)
 			)();
 		}
 	}
@@ -438,9 +438,9 @@ const SEGMENT_FLAGS = {
 };
 
 function segment<T extends 32|64>(bits: T) {
-	const type		= binary.asHex(binary.UINT(bits));
+	const type		= bin.asHex(bin.UINT(bits));
 	const fields	= {
-		data:		binary.DontRead<binary.MappedMemory>(),
+		data:		bin.DontRead<bin.MappedMemory>(),
 		segname: 	fixed_string16,	// segment name
 		vmaddr:		type,		// memory address of this segment
 		vmsize:		type,		// memory size of this segment
@@ -449,20 +449,20 @@ function segment<T extends 32|64>(bits: T) {
 		maxprot:	uint32,		// maximum VM protection
 		initprot:	uint32,		// initial VM protection
 		nsects:		uint32,		// number of sections in segment
-		flags:		binary.as(uint32, binary.Flags(SEGMENT_FLAGS,true)),			// flags
-		sections:	binary.DontRead<Record<string, any>>(),//binary.ReadType<typeof section(bits)>)),
+		flags:		bin.as(uint32, bin.Flags(SEGMENT_FLAGS,true)),			// flags
+		sections:	bin.DontRead<Record<string, any>>(),//binary.ReadType<typeof section(bits)>)),
 	};
 	return {
 		get(s: mach_stream) {
-			const o = binary.read(s, fields);
+			const o = bin.read(s, fields);
 
 			async function load() {
 				const data = await s.getmem(BigInt(Number(o.vmaddr)), Number(o.filesize)) ?? s.subdata(Number(o.fileoff), Number(o.filesize));
-				o.data = new binary.MappedMemory(data, Number(o.vmaddr), o.initprot | s.memflags);
+				o.data = new bin.MappedMemory(data, BigInt(o.vmaddr.value), o.initprot | s.memflags);
 
 				//const sect = section(bits);
 				if (o.nsects) {
-					o.sections = binary.objectWithNames(binary.ArrayType(o.nsects, section(bits)), binary.field('sectname')).get(s);
+					o.sections = bin.objectWithNames(bin.ArrayType(o.nsects, section(bits)), bin.field('sectname')).get(s);
 					//o.sections = Object.fromEntries(Array.from({length: o.nsects}, (_,i)=>new sect(s)).map(s => [s.sectname, s]));
 				}
 			}
@@ -531,9 +531,9 @@ const thread_command = {
 
 
 // SYMTAB
-const nlist_flags = binary.BitFields({
+const nlist_flags = bin.BitFields({
 	ext: 1,
-	type: [3, binary.Enum({
+	type: [3, bin.Enum({
 		UNDF:	0,		// undefined, n_sect == NO_SECT
 		ABS:	1,		// absolute, n_sect == NO_SECT
 		INDR:	5,		// indirect
@@ -541,7 +541,7 @@ const nlist_flags = binary.BitFields({
 		SECT:	7,		// defined in section number n_sect
 	})],
 	pext: 1,
-	stab: [3, binary.Enum({
+	stab: [3, bin.Enum({
 
 	})],
 });
@@ -589,8 +589,8 @@ const nlist_flags = binary.BitFields({
 	LENG	= 0xfe,		// second stab entry with length information
 }
 */
-const nlist_desc = binary.BitFields({
-	ref: [3, binary.Enum({
+const nlist_desc = bin.BitFields({
+	ref: [3, bin.Enum({
 		UNDEFINED_NON_LAZY:			0,
 		UNDEFINED_LAZY:				1,
 		DEFINED:					2,
@@ -598,7 +598,7 @@ const nlist_desc = binary.BitFields({
 		PRIVATE_UNDEFINED_NON_LAZY:	4,
 		PRIVATE_UNDEFINED_LAZY:		5,
 	})],
-	flags: [5, binary.Flags({
+	flags: [5, bin.Flags({
 		ARM_THUMB_DEF:					1 << 0,	// symbol is a Thumb function (ARM)
 		REF_DYNAMIC:					1 << 1,
 		NO_DEAD_STRIP:					1 << 2,	// symbol is not to be dead stripped
@@ -616,10 +616,10 @@ const nlist_desc = binary.BitFields({
 
 function nlist(bits:32|64) { return {
 	strx:	uint32,	// index into the string table
-	flags:	binary.as(binary.UINT8, nlist_flags),
-	sect:	binary.UINT8,// section number or NO_SECT
-	desc:	binary.as(uint16, nlist_desc),
-	value:	binary.UINT(bits),
+	flags:	bin.as(bin.UINT8, nlist_flags),
+	sect:	bin.UINT8,// section number or NO_SECT
+	desc:	bin.as(uint16, nlist_desc),
+	value:	bin.UINT(bits),
 	
 	//const char *name(const char *s) const { return s ? s + strx : ""; }
 	//FLAGS		type()	const	{ return FLAGS(flags & TYPE); }
@@ -627,10 +627,10 @@ function nlist(bits:32|64) { return {
 }; }
 
 const symtab = {
-	get(s: binary._stream) {
-		const sym = binary.read(s, count_table(nlist(64)));
-		const str = binary.read(s, blob) as Uint8Array;
-		return sym?.map(v => [binary.utils.decodeTextTo0(str.subarray(v.strx), 'utf8'), v]);
+	get(s: bin._stream) {
+		const sym = bin.read(s, count_table(nlist(64)));
+		const str = bin.read(s, blob) as Uint8Array;
+		return sym?.map(v => [bin.utils.decodeTextTo0(str.subarray(v.strx), 'utf8'), v]);
 	}
 };
 
@@ -664,12 +664,12 @@ function module(bits:32|64) {
 	};
 }
 
-const symbol_ref = binary.as(uint32, binary.BitFields({
+const symbol_ref = bin.as(uint32, bin.BitFields({
 	symbol_index: 24,	// index into the symbol table
 	flags: 8
 }));
 
-const hint = binary.as(uint32, binary.BitFields({
+const hint = bin.as(uint32, bin.BitFields({
 	sub_image: 8,	// index into the sub images
 	toc: 24			// index into the table of contents
 }));
@@ -679,9 +679,9 @@ const version_min = {
 	reserved:	uint32,	// zero
 };
 
-const REBASE = binary.BitFields({
+const REBASE = bin.BitFields({
 	immediate: 4,
-	opcode:		[4, binary.Enum({
+	opcode:		[4, bin.Enum({
 		DONE:								0,
 		SET_TYPE_IMM:						1,
 		SET_SEGMENT_AND_OFFSET_ULEB:		2,
@@ -697,9 +697,9 @@ const REBASE = binary.BitFields({
 	//TYPE_TEXT_PCREL32						= 3,
 });
 
-const BIND = binary.BitFields({
+const BIND = bin.BitFields({
 	immediate: 4,
-	opcode:		[4, binary.Enum({
+	opcode:		[4, bin.Enum({
 		DONE:								0,
 		SET_DYLIB_ORDINAL_IMM:				1,
 		SET_DYLIB_ORDINAL_ULEB:				2,
@@ -768,7 +768,7 @@ const PLATFORM = {
 const dyld_chained_starts_in_segment = {
 	size:				uint32,			///< Size of this, including chain_starts entries
 	page_size:			uint16,		///< Page size in bytes (0x1000 or 0x4000)
-	pointer_format:	 	binary.asEnum(uint16, {
+	pointer_format:	 	bin.asEnum(uint16, {
 		ARM64E:					1,
 		'64':					2,
 		'32':					3,
@@ -784,16 +784,16 @@ const dyld_chained_starts_in_segment = {
 	}),
 	segment_offset:	 	xint64,	// VM offset from the __TEXT segment
 	max_valid_pointer:	xint32,	// Values beyond this are not pointers on 32-bit
-	pages:				binary.ArrayType(uint16, binary.asEnum(uint16, {
+	pages:				bin.ArrayType(uint16, bin.asEnum(uint16, {
 		NONE:		0xFFFF,
 		MULTI: 	0x8000,	// page which has multiple starts
 		LAST:		0x8000,	// last chain_start for a given page
 	}))
 };
 
-const dyld_chained_starts_in_image	= binary.ArrayType(uint32, binary.OffsetType(uint32, dyld_chained_starts_in_segment));
+const dyld_chained_starts_in_image	= bin.ArrayType(uint32, bin.OffsetType(uint32, dyld_chained_starts_in_segment));
 
-const dyld_chained_import = binary.as(uint32, binary.BitFields({
+const dyld_chained_import = bin.as(uint32, bin.BitFields({
 	lib_ordinal : 8,
 	weak_import : 1,
 	name_offset : 23,
@@ -805,7 +805,7 @@ const dyld_chained_import_addend = {
 };
 
 const dyld_chained_import_addend64 = {
-	import: binary.as(uint64, binary.BitFields({
+	import: bin.as(uint64, bin.BitFields({
 		lib_ordinal : 16,
 		weak_import : 1,
 		reserved	: 15,
@@ -814,42 +814,42 @@ const dyld_chained_import_addend64 = {
 	addend:	uint64,
 };
 
-class dyld_chained_fixups extends binary.ReadClass({
+class dyld_chained_fixups extends bin.ReadClass({
 	fixups_version:	uint32,	// currently 0
-	starts:			binary.OffsetType(uint32, dyld_chained_starts_in_image),
-	imports:		binary.OffsetType(uint32, binary.Remainder),	// offset of imports table in chain_data
-	symbols:		binary.OffsetType(uint32, binary.Remainder),	// offset of symbol strings in chain_data
+	starts:			bin.OffsetType(uint32, dyld_chained_starts_in_image),
+	imports:		bin.OffsetType(uint32, bin.Remainder),	// offset of imports table in chain_data
+	symbols:		bin.OffsetType(uint32, bin.Remainder),	// offset of symbol strings in chain_data
 	imports_count:	uint32,	// number of imported symbol names
-	imports_format:	binary.asEnum(uint32, {
+	imports_format:	bin.asEnum(uint32, {
 		IMPORT:				1,
 		IMPORT_ADDEND:	 	2,
 		IMPORT_ADDEND64: 	3
 	}),
-	symbols_format:	binary.asEnum(uint32, {
+	symbols_format:	bin.asEnum(uint32, {
 		UNCOMPRESSED:		0,
 		ZLIB:				1,
 	}),
 }) {
 	imports2;
-	constructor(s: binary.endianStream) {
+	constructor(s: bin.endianStream) {
 		super(s);
-		const imports = new binary.endianStream(this.imports, s.be);
+		const imports = new bin.endianStream(this.imports, s.be);
 		switch (this.imports_format) {
 			case 'IMPORT': {
-				this.imports2 = binary.withNames(binary.readn(imports, dyld_chained_import, this.imports_count), imp => binary.utils.decodeTextTo0(this.symbols.subarray(Number(imp.name_offset))));
+				this.imports2 = bin.withNames(bin.readn(imports, dyld_chained_import, this.imports_count), imp => bin.utils.decodeTextTo0(this.symbols.subarray(Number(imp.name_offset))));
 				break;
 			}
 			case 'IMPORT_ADDEND':
-				this.imports2 = binary.withNames(binary.readn(imports, dyld_chained_import_addend, this.imports_count), imp => binary.utils.decodeTextTo0(this.symbols.subarray(Number(imp.import.name_offset))));
+				this.imports2 = bin.withNames(bin.readn(imports, dyld_chained_import_addend, this.imports_count), imp => bin.utils.decodeTextTo0(this.symbols.subarray(Number(imp.import.name_offset))));
 				break;
 			case 'IMPORT_ADDEND64':
-				this.imports2 = binary.withNames(binary.readn(imports, dyld_chained_import_addend64, this.imports_count), imp => binary.utils.decodeTextTo0(this.symbols.subarray(Number(imp.import.name_offset))));
+				this.imports2 = bin.withNames(bin.readn(imports, dyld_chained_import_addend64, this.imports_count), imp => bin.utils.decodeTextTo0(this.symbols.subarray(Number(imp.import.name_offset))));
 				break;
 		}
 	}
 }
 
-const dyld_chained_ptr_64_bind = binary.as(uint64, binary.BitFields({
+const dyld_chained_ptr_64_bind = bin.as(uint64, bin.BitFields({
 	ordinal		: 24,
 	addend	 	: 8,
 	reserved 	: 19,
@@ -857,7 +857,7 @@ const dyld_chained_ptr_64_bind = binary.as(uint64, binary.BitFields({
 	bind		: 1, // set to 1
 }));
 
-const dyld_chained_ptr_64_rebase = binary.as(uint64, binary.BitFields({
+const dyld_chained_ptr_64_rebase = bin.as(uint64, bin.BitFields({
 	target	 	: 36,
 	high8		: 8,
 	reserved 	: 7,
@@ -870,7 +870,7 @@ const dyld_chained_ptr_64_rebase = binary.as(uint64, binary.BitFields({
 const data_in_code_entry = {
 	offset:	xint32,		// from header to start of data range
 	length:	uint16,		// number of bytes in data range
-	kind:	binary.as(uint16, binary.Enum({
+	kind:	bin.as(uint16, bin.Enum({
 		DATA:				0x0001,
 		JUMP_TABLE8:		0x0002,
 		JUMP_TABLE16:		0x0003,
@@ -889,7 +889,7 @@ const tlv_descriptor = {
 */
 
 function routines(bits:32|64) {
-	const type		= binary.UINT(bits);
+	const type		= bin.UINT(bits);
 	return {
 		init_address:	type,	// address of initialization routine
 		init_module:	type,	// index into the module table that the init routine is defined in
@@ -948,12 +948,12 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 	},
 
 	[CMD.UUID]:						{
-		uuid:		binary.Buffer(16),
+		uuid:		bin.Buffer(16),
 	},
 
 	[CMD.CODE_SIGNATURE]:			blob,
 	[CMD.SEGMENT_SPLIT_INFO]:		blob,
-	[CMD.FUNCTION_STARTS]:			blobArray(binary.ULEB128),
+	[CMD.FUNCTION_STARTS]:			blobArray(bin.ULEB128),
 	[CMD.DATA_IN_CODE]:				blobArray(data_in_code_entry),
 	[CMD.DYLIB_CODE_SIGN_DRS]:		blob,
 	[CMD.LINKER_OPTIMIZATION_HINT]:	blob,
@@ -995,13 +995,13 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 	},
 
 	[CMD.SOURCE_VERSION]:			{
-		version:		binary.as(binary.UINT64_BE, binary.BitFields({a:24, b:10, c:10, d:10, e:10}))	// A.B.C.D.E packed as a24.b10.c10.d10.e10
+		version:		bin.as(bin.UINT64_BE, bin.BitFields({a:24, b:10, c:10, d:10, e:10}))	// A.B.C.D.E packed as a24.b10.c10.d10.e10
 	},
 	[CMD.BUILD_VERSION]:			{
-		platform:		binary.asEnum(uint32, PLATFORM),
+		platform:		bin.asEnum(uint32, PLATFORM),
 		minos:			version,
 		sdk:			version,
-		tools:			binary.objectWithNames(binary.ArrayType(uint32, {tool: binary.as(uint32, binary.Enum(TOOL)), version}), binary.field('tool')),
+		tools:			bin.objectWithNames(bin.ArrayType(uint32, {tool: bin.as(uint32, bin.Enum(TOOL)), version}), bin.field('tool')),
 	},
 	[CMD.LINKER_OPTION]:			{
 		count:			uint32,	// number of strings following
@@ -1026,7 +1026,7 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 
 export class MachFile {
 	static check(data: Uint8Array): boolean {
-		switch (binary.UINT32_BE.get(new binary.stream(data))) {
+		switch (bin.UINT32_BE.get(new bin.stream(data))) {
 			case 0xfeedface:
 			case 0xcefaedfe:
 			case 0xfeedfacf:
@@ -1037,11 +1037,11 @@ export class MachFile {
 		}
 	}
 
-	header!: binary.ReadType<typeof header>;
+	header!: bin.ReadType<typeof header>;
 	commands:{cmd:CMD, data:any}[]	= [];
 
-	constructor(data: Uint8Array, mem?: binary.memory) {
-		const magic	= binary.UINT32_LE.get(new binary.stream(data));
+	constructor(data: Uint8Array, mem?: bin.memory) {
+		const magic	= bin.UINT32_LE.get(new bin.stream(data));
 		switch (magic) {
 			case 0xfeedface:	this.load(data, false, 32, mem); break;
 			case 0xcefaedfe:	this.load(data, true,  32, mem); break;
@@ -1051,18 +1051,18 @@ export class MachFile {
 		}
 	}
 
-	load(data: Uint8Array, be: boolean, bits: 32|64, mem?: binary.memory) {
-		const file	= new binary.endianStream(data, be);
-		const h 	= binary.read(file, header);
+	load(data: Uint8Array, be: boolean, bits: 32|64, mem?: bin.memory) {
+		const file	= new bin.endianStream(data, be);
+		const h 	= bin.read(file, header);
 		const cpu	= CPU_TYPE[h.cputype as keyof typeof CPU_TYPE];
-		h.cpusubtype = binary.Enum(CPU_SUBTYPES[cpu])(+h.cpusubtype);
+		h.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+h.cpusubtype);
 		if (bits === 64)
 			file.skip(4);
 
 		for (let i = 0; i < h.ncmds; ++i) {
-			const cmd	= binary.read(file, command);
-			const file2	= new mach_stream(data, file.read_buffer(cmd.cmdsize - 8), file.be, h.filetype === 'EXECUTE' ? 0: binary.MappedMemory.RELATIVE, mem);
-			const result = binary.read(file2, cmd_table[cmd.cmd] ?? {});
+			const cmd	= bin.read(file, command);
+			const file2	= new mach_stream(data, file.read_buffer(cmd.cmdsize - 8), file.be, h.filetype === 'EXECUTE' ? 0: bin.MappedMemory.RELATIVE, mem);
+			const result = bin.read(file2, cmd_table[cmd.cmd] ?? {});
 			this.commands.push({cmd: cmd.cmd, data: result});
 		}
 		this.header = h;
@@ -1077,7 +1077,7 @@ export class MachFile {
 		}
 	}
 	
-	getCommand<T extends CMD>(cmd: T) : binary.ReadType<typeof cmd_table[T]>;
+	getCommand<T extends CMD>(cmd: T) : bin.ReadType<typeof cmd_table[T]>;
 	getCommand(cmd: CMD) {
 		for (const i of this.commands) {
 			if (i.cmd === cmd)
@@ -1088,9 +1088,9 @@ export class MachFile {
 	getSegment(name: string) {
 		for (const i of this.commands) {
 			if (i.cmd === CMD.SEGMENT && i.data.segname === name)
-				return i.data as binary.ReadType<typeof cmd_table[CMD.SEGMENT]>;
+				return i.data as bin.ReadType<typeof cmd_table[CMD.SEGMENT]>;
 			if (i.cmd === CMD.SEGMENT_64 && i.data.segname === name)
-				return i.data as binary.ReadType<typeof cmd_table[CMD.SEGMENT_64]>;;
+				return i.data as bin.ReadType<typeof cmd_table[CMD.SEGMENT_64]>;;
 		}
 	}
 }
@@ -1099,10 +1099,10 @@ const FAT_MAGIC		= 0xcafebabe;
 const FAT_CIGAM		= 0xbebafeca;
 
 export class FATMachFile {
-	archs:	binary.ReadType<typeof fat_arch>[] = [];
+	archs:	bin.ReadType<typeof fat_arch>[] = [];
 
 	static check(data: Uint8Array): boolean {
-		switch (binary.UINT32_BE.get(new binary.stream(data))) {
+		switch (bin.UINT32_BE.get(new bin.stream(data))) {
 			case FAT_MAGIC:
 			case FAT_CIGAM:
 				return true;
@@ -1111,22 +1111,22 @@ export class FATMachFile {
 		}
 	}
 	
-	constructor(data: Uint8Array, mem?: binary.memory) {
-		switch (binary.UINT32_BE.get(new binary.stream(data))) {
-			case FAT_MAGIC:		this.load(new binary.endianStream(data, true), mem); break;
-			case FAT_CIGAM:		this.load(new binary.endianStream(data, false), mem); break;
+	constructor(data: Uint8Array, mem?: bin.memory) {
+		switch (bin.UINT32_BE.get(new bin.stream(data))) {
+			case FAT_MAGIC:		this.load(new bin.endianStream(data, true), mem); break;
+			case FAT_CIGAM:		this.load(new bin.endianStream(data, false), mem); break;
 			default:
 				throw new Error('not a fat mach file');
 		}
 	}
 
-	load(file: binary.endianStream, mem?: binary.memory) {
-		const header = binary.read(file, fat_header);
+	load(file: bin.endianStream, mem?: bin.memory) {
+		const header = bin.read(file, fat_header);
 		this.archs = header.archs;
 		for (const arch of header.archs) {
 			const cpu	= CPU_TYPE[arch.cputype as keyof typeof CPU_TYPE];
 			const data	= file.buffer_at(arch.offset, arch. size);
-			arch.cpusubtype = binary.Enum(CPU_SUBTYPES[cpu])(+arch.cpusubtype);
+			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+arch.cpusubtype);
 			arch.contents	= new MachFile(data, mem);
 		}
 	}
