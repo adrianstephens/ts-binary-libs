@@ -461,7 +461,7 @@ export class CLR {
 	header;
 	table_info;
 	heaps:		Uint8Array[] = [];
-	tables!:	Record<TABLE, Table>;
+	tables:		Record<TABLE, Table> = {} as any;
 	Resources?:	Uint8Array;
 
 	constructor(pe: pe.PE, clr_data: Uint8Array) {

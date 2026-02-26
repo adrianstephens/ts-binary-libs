@@ -11,7 +11,6 @@
 		"forceConsistentCasingInFileNames": true,
 		"sourceMap": true,
 		"outDir": "./dist",
-		"rootDir": "./src",
 		"plugins": [
 			{
 				"transform": "./scripts/transform.ts",

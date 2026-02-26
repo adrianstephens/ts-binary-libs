@@ -21,7 +21,8 @@
 		"build": "tsc",
 		"watch": "tsc -watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
-		"patch": "ts-patch install"
+		"patch": "ts-patch install",
+		"link": "npm link @isopodlabs/binary"
 	},
 	"keywords": [
 		"binary",
