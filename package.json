@@ -42,8 +42,8 @@
 		"ts-patch": "^3.3.0",
 		"typescript-eslint": "^8.26.0"
 	},
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.7.1"
+		"@isopodlabs/binary": "^1.7.2"
 	}
 }

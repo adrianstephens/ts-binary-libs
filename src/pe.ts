@@ -233,10 +233,10 @@ const EXE_HEADER = {
 	lfanew:		bin.INT32_LE,
 };
 
-interface DirectoryInfo {
-	read: (pe: PE, data: MappedMemory) => unknown;
+interface DirectoryInfo<T> {
+	read: (pe: PE, data: MappedMemory) => T;
 }
-const NoInfo: DirectoryInfo = {
+const NoInfo: DirectoryInfo<MappedMemory> = {
 	read: (pe: PE, data: MappedMemory) => data
 };
 
@@ -256,7 +256,7 @@ export const DIRECTORIES = {
 	IAT:			NoInfo,	// Import Address Table
 	DELAY_IMPORT:	NoInfo,
 	CLR_DESCRIPTOR:	{read: ReadCLR },
-} as const satisfies Record<string, DirectoryInfo>;
+} satisfies Record<string, DirectoryInfo<any>>;
 
 type DirectoryName	= keyof typeof DIRECTORIES;
 type DirectoryReadResult<T extends DirectoryName> = typeof DIRECTORIES[T] extends {read: (pe: PE, data: MappedMemory) => infer R} ? R : MappedMemory | undefined;

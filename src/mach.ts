@@ -311,7 +311,7 @@ const index_table = {
 };
 
 const blob = {
-	get(s: mach_stream) {
+	get(s: mach_stream): Uint8Array|undefined {
 		const offset	= uint32.get(s);
 		const size		= uint32.get(s);
 		if (size)
