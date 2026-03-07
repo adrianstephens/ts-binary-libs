@@ -1,31 +1,32 @@
-import * as binary from '@isopodlabs/binary';
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import * as bin from '@isopodlabs/binary';
 
 function field(f: string) {
-	return (s: binary._stream) => s.obj[f];
+	return (s: bin._stream) => s.obj[f];
 }
 
-const uint8 = binary.UINT8;
-const uint16 = binary.UINT16_LE;
-const uint32 = binary.UINT32_LE;
-const uint64 = binary.UINT64_LE;
-const int8 = binary.INT8;
-const int16 = binary.INT16;
-const int32 = binary.INT32;
-const int64 = binary.INT64;
+const uint8 = bin.UINT8;
+const uint16 = bin.UINT16_LE;
+const uint32 = bin.UINT32_LE;
+const uint64 = bin.UINT64_LE;
+const int8 = bin.INT8;
+const int16 = bin.INT16;
+const int32 = bin.INT32;
+const int64 = bin.INT64;
 
 const type16_t = uint16;
 const type_t = uint32;
 const token_t = uint32;
 const ItemId = type_t;
 
-const octword = binary.Buffer(32);
-const uoctword = binary.Buffer(32);
+const octword = bin.Buffer(32);
+const uoctword = bin.Buffer(32);
 
-const date = binary.Float64_LE; // double
-const stringz = binary.NullTerminatedStringType();
+const date = bin.Float64_LE; // double
+const stringz = bin.NullTerminatedStringType();
 
 // 96-bit unsigned integer with power of 10 scaling factor
-export class Decimal extends binary.Class({
+export class Decimal extends bin.Class({
 	reserved: uint16,
 	scale: uint8,
 	sign: uint8,
@@ -67,21 +68,25 @@ const CV_MAXOFFSET = 0xffffffff;
 
 // Compression functions
 
-const CVCompressed: binary.TypeT<number> = {
-	get(s: binary._stream) 				{
-		const buffer	= s.remainder();
+function skip(s: bin._stream, len: number) {
+	s.seek(s.tell() + len);
+}
+
+const CVCompressed: bin.TypeT<number> = {
+	get(s: bin._stream) 				{
+		const buffer	= bin.remainder(s);
 		const b0		= buffer[0];
 		
 		if ((b0 & 0x80) === 0x00) {
-			s.skip(1);
+			skip(s, 1);
 			return b0;
 
 		} else if ((b0 & 0xC0) === 0x80) {
-			s.skip(2);
+			skip(s, 2);
 			return ((b0 & 0x3f) << 8) | buffer[1];
 
 		} else if ((b0 & 0xE0) === 0xC0) {
-			s.skip(4);
+			skip(s, 4);
 			return ((b0 & 0x1f) << 24) |
 					(buffer[1] << 16) |
 					(buffer[2] << 8) |
@@ -90,18 +95,18 @@ const CVCompressed: binary.TypeT<number> = {
 		}
 		throw new Error("Invalid compressed data");
 	},
-	put(s: binary._stream, v: number)	{
+	put(s: bin._stream, v: number)	{
 		if (v <= 0x7F) {
-			s.write_buffer(new Uint8Array([v]));
+			bin.write_buffer(s, new Uint8Array([v]));
 
 		} else if (v <= 0x3FFF) {
-			s.write_buffer(new Uint8Array([
+			bin.write_buffer(s, new Uint8Array([
 				((v >> 8) | 0x80) & 0xFF,
 				v & 0xFF
 			]));
 
 		} else if (v <= 0x1FFFFFFF) {
-			s.write_buffer(new Uint8Array([
+			bin.write_buffer(s, new Uint8Array([
 				((v >> 24) | 0xC0) & 0xFF,
 				(v >> 16) & 0xFF,
 				(v >> 8) & 0xFF,
@@ -233,14 +238,14 @@ enum LEAF_ENUM_e {
 }
 
 // Value structure for numeric leaves
-const Value = binary.Switch(uint16, {
+const Value = bin.Switch(uint16, {
 	[LEAF_ENUM_e.LF_CHAR]: int8,
 	[LEAF_ENUM_e.LF_SHORT]: int16,
 	[LEAF_ENUM_e.LF_USHORT]: uint16,
 	[LEAF_ENUM_e.LF_LONG]: int32,
 	[LEAF_ENUM_e.LF_ULONG]: uint32,
-	[LEAF_ENUM_e.LF_REAL32]: binary.Float32,
-	[LEAF_ENUM_e.LF_REAL64]: binary.Float64,
+	[LEAF_ENUM_e.LF_REAL32]: bin.Float32,
+	[LEAF_ENUM_e.LF_REAL64]: bin.Float64,
 	[LEAF_ENUM_e.LF_QUADWORD]: uint64,
 	[LEAF_ENUM_e.LF_UQUADWORD]: uint64,
 	[LEAF_ENUM_e.LF_DECIMAL]: Decimal,
@@ -249,7 +254,7 @@ const Value = binary.Switch(uint16, {
 
 
 // Property structure for classes/structs/unions
-const prop_t = binary.as(uint16, binary.BitFields({
+const prop_t = bin.as(uint16, bin.BitFields({
 	packed:			1,
 	ctor:			1,
 	ovlops:			1,
@@ -261,13 +266,13 @@ const prop_t = binary.as(uint16, binary.BitFields({
 	scoped:			1,
 	hasuniquename:	1,
 	sealed:			1,
-	hfa:			[2, binary.Enum({none: 0, float: 1, double: 2, other:3})],
+	hfa:			[2, bin.Enum({none: 0, float: 1, double: 2, other:3})],
 	intrinsic:		1,
-	mocom:			[2, binary.Enum({NONAME: 0, ref: 1, Value: 2, 'interface':3})],
+	mocom:			[2, bin.Enum({NONAME: 0, ref: 1, Value: 2, 'interface':3})],
 }));
 
 // Field attribute structure
-const fldattr_t = binary.as(uint16, binary.BitFields({
+const fldattr_t = bin.as(uint16, bin.BitFields({
 	access: 2,
 	mprop: 3,
 	pseudo: 1,
@@ -278,13 +283,13 @@ const fldattr_t = binary.as(uint16, binary.BitFields({
 }));
 
 // Function attribute structure
-const funcattr_t = binary.as(uint8, binary.BitFields({
+const funcattr_t = bin.as(uint8, bin.BitFields({
 	cxxreturnudt: 1,
 	ctor: 1,
 	ctorvbase: 1,
 }));
 
-const modifier_t = binary.as(uint16, binary.BitFields({
+const modifier_t = bin.as(uint16, bin.BitFields({
 	constant: 1,
 	volatile: 1,
 	unaligned: 1,
@@ -345,16 +350,16 @@ enum pmtype_e {
 };
 
 const Pointer_16t = {
-	attr: binary.as(uint32, binary.BitFields({
-		ptrtype:	[5, binary.Enum(ptrtype_e)],
-		ptrmode:	[3, binary.Enum(ptrmode_e)],
+	attr: bin.as(uint32, bin.BitFields({
+		ptrtype:	[5, bin.Enum(ptrtype_e)],
+		ptrmode:	[3, bin.Enum(ptrmode_e)],
 		isflat32: 	1,
 		isvolatile:	1,
 		isconst:	1,
 		isunaligned: 1,
 	})),
 	utype:	type16_t,
-	pbase: binary.Switch((s: binary._stream) => s.obj.attr.ptrtype, {
+	pbase: bin.Switch((s: bin._stream) => s.obj.attr.ptrtype, {
 		PTR_BASE_SEG: {
 			bseg: uint16,
 		},
@@ -372,9 +377,9 @@ const Pointer_16t = {
 
 const Pointer = {
 	utype: type_t,
-	attr: binary.as(uint32, binary.BitFields({
-		ptrtype:	[5, binary.Enum(ptrtype_e)],
-		ptrmode:	[3, binary.Enum(ptrmode_e)],
+	attr: bin.as(uint32, bin.BitFields({
+		ptrtype:	[5, bin.Enum(ptrtype_e)],
+		ptrmode:	[3, bin.Enum(ptrmode_e)],
 		isflat32: 1,
 		isvolatile: 1,
 		isconst: 1,
@@ -385,7 +390,7 @@ const Pointer = {
 		islref: 1,
 		isrref: 1,
 	})),
-	pbase: binary.Switch((s: binary._stream) => s.obj.attr.ptrtype, {
+	pbase: bin.Switch((s: bin._stream) => s.obj.attr.ptrtype, {
 		PTR_BASE_SEG: {
 			bseg: uint16,
 		},
@@ -437,7 +442,7 @@ const Matrix = {
 	rows: uint32,
 	cols: uint32,
 	majorStride: uint32,
-	_: binary.as(uint32, binary.BitFields({
+	_: bin.as(uint32, bin.BitFields({
 		row_major: 1,
 		unused: 7,
 	})),
@@ -548,7 +553,7 @@ function ST(x: any) {
 }
 
 // Base leaf structure
-const Leaf = binary.Switch(uint16, {
+const Leaf = bin.Switch(uint16, {
 	LF_MODIFIER_16t:		Modifier_16t,
 	LF_POINTER_16t:			Pointer_16t,
 	LF_ARRAY_16t:			Array_16t,
@@ -888,8 +893,8 @@ enum SYM_ENUM_e {
 // Base symbol structure
 const SYMTYPE = {
 	reclen: uint16,
-	rectyp: binary.asEnum(uint16, SYM_ENUM_e),
-	data: binary.SizeType(field('reclen'), binary.Switch(field('rectype'), {
+	rectyp: bin.asEnum(uint16, SYM_ENUM_e),
+	data: bin.SizeType(field('reclen'), bin.Switch(field('rectype'), {
 		// Register symbol
 		S_REGSYM: {
 			typind: type_t,
@@ -933,7 +938,7 @@ const SYMTYPE = {
 				off: uint32,
 				seg: uint16,
 			},
-			flags: binary.as(uint8, binary.BitFields({
+			flags: bin.as(uint8, bin.BitFields({
 				PFLAG_NOFPO: 1,
 				PFLAG_INT: 1,
 				PFLAG_FAR: 1,
@@ -965,7 +970,7 @@ enum DEBUG_S {
 // Line information
 const LineInfo = {
 	offset: uint32,
-	_: binary.as(uint32, binary.BitFields({
+	_: bin.as(uint32, bin.BitFields({
 		linenumStart: 24,
 		deltaLineEnd: 7,
 		fStatement: 1,
@@ -975,14 +980,14 @@ const LineInfo = {
 // Subsection base structure
 const SubSection = {
 	type:	uint32,
-	data:	binary.SizeType(int32, binary.Switch(field('type'), {
-		[DEBUG_S.SYMBOLS]: binary.RemainingArrayType(SYMTYPE),
-		[DEBUG_S.LINES]: binary.RemainingArrayType(LineInfo),
-		[DEBUG_S.STRINGTABLE]: binary.RemainingArrayType(stringz),
-		[DEBUG_S.FILECHKSMS]: binary.Remainder,
-		[DEBUG_S.FRAMEDATA]: binary.Remainder,
-		[DEBUG_S.INLINEELINES]: binary.Remainder,
-		[DEBUG_S.CROSSSCOPEIMPORTS]: binary.Remainder,
-		[DEBUG_S.CROSSSCOPEEXPORTS]: binary.Remainder,
+	data:	bin.SizeType(int32, bin.Switch(field('type'), {
+		[DEBUG_S.SYMBOLS]: bin.RemainingArrayType(SYMTYPE),
+		[DEBUG_S.LINES]: bin.RemainingArrayType(LineInfo),
+		[DEBUG_S.STRINGTABLE]: bin.RemainingArrayType(stringz),
+		[DEBUG_S.FILECHKSMS]: bin.Remainder,
+		[DEBUG_S.FRAMEDATA]: bin.Remainder,
+		[DEBUG_S.INLINEELINES]: bin.Remainder,
+		[DEBUG_S.CROSSSCOPEIMPORTS]: bin.Remainder,
+		[DEBUG_S.CROSSSCOPEEXPORTS]: bin.Remainder,
 	}))
 };

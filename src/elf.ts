@@ -1,4 +1,5 @@
 import * as bin from '@isopodlabs/binary';
+import { MappedMemory } from './common';
 
 //--------------------	FILE HEADER
 
@@ -616,7 +617,7 @@ const RELOC = {
 function Pair(top: bin.Type, bottom: bin.Type, be: boolean) {
 	return be ? {top, bottom} : {bottom, top};
 }
-function readDataAs<T extends bin.Type>(data: bin.MappedMemory | undefined, type: T) {
+function readDataAs<T extends bin.Type>(data: MappedMemory | undefined, type: T) {
 	if (data)
 		return bin.RemainingArrayType(type).get(new bin.stream(data.data));
 }
@@ -689,14 +690,14 @@ export class ELFFile {
 			p_memsz:		Xword,
 			p_align:		Xword,
 		}) {
-			data: bin.MappedMemory;
+			data: MappedMemory;
 			constructor(s: bin.stream) {
 				super(s);
-				const flags = bin.MappedMemory.RELATIVE
-							| (this.p_flags.R ? bin.MappedMemory.READ : 0)
-							| (this.p_flags.W ? bin.MappedMemory.WRITE : 0)
-							| (this.p_flags.X ? bin.MappedMemory.EXECUTE : 0);
-				this.data = new bin.MappedMemory(s.buffer_at(Number(this.p_offset), Number(this.p_filesz)), BigInt(this.p_vaddr.value), flags);
+				const flags = MappedMemory.RELATIVE
+							| (this.p_flags.R ? MappedMemory.READ : 0)
+							| (this.p_flags.W ? MappedMemory.WRITE : 0)
+							| (this.p_flags.X ? MappedMemory.EXECUTE : 0);
+				this.data = new MappedMemory(bin.buffer_at(s, Number(this.p_offset), Number(this.p_filesz)), BigInt(this.p_vaddr.value), flags);
 			}
 		}
 
@@ -712,14 +713,14 @@ export class ELFFile {
 			sh_addralign:	Off,		//address alignment constraints
 			sh_entsize:		Off,		//size in bytes of each entry (when appropriate)
 		}) {
-			data: bin.MappedMemory;
+			data: MappedMemory;
 			constructor(s: bin.stream) {
 				super(s);
-				const flags = bin.MappedMemory.RELATIVE | bin.MappedMemory.READ
-							| (this.sh_flags.WRITE ? bin.MappedMemory.WRITE : 0)
-							| (this.sh_flags.EXECINSTR ? bin.MappedMemory.EXECUTE : 0);
-				const buffer = this.sh_type === 'NOBITS' ? new Uint8Array(0) : s.buffer_at(Number(this.sh_offset), Number(this.sh_size));
-				this.data = new bin.MappedMemory(buffer, BigInt(this.sh_addr.value), flags);
+				const flags = MappedMemory.RELATIVE | MappedMemory.READ
+							| (this.sh_flags.WRITE ? MappedMemory.WRITE : 0)
+							| (this.sh_flags.EXECINSTR ? MappedMemory.EXECUTE : 0);
+				const buffer = this.sh_type === 'NOBITS' ? new Uint8Array(0) : bin.buffer_at(s, Number(this.sh_offset), Number(this.sh_size));
+				this.data = new MappedMemory(buffer, BigInt(this.sh_addr.value), flags);
 			}
 		}
 
@@ -756,7 +757,7 @@ export class ELFFile {
 		this.getRelA	= () => readDataAs(sh.find(i => i.sh_type === 'RELA')?.data, Rela);
 
 		const Sym = {
-			data:		bin.DontRead<bin.MappedMemory>(),
+			data:		bin.DontRead<MappedMemory>(),
 			st_name:	Word,			//index into the object file's symbol string table
 			...(bits === 32 ? {
 				st_value:	Addr,			//value of the associated symbol
@@ -782,8 +783,8 @@ export class ELFFile {
 					if (+sym.st_shndx) {
 						const section = sh[+sym.st_shndx];
 						const offset = Number(sym.st_value.value) - Number(section.sh_addr.value);
-						const flags	= sym.st_info.type === 'FUNC' ? section.data.flags : section.data.flags & ~bin.MappedMemory.EXECUTE;
-						sym.data = new bin.MappedMemory(section.data.data.subarray(offset, offset + Number(sym.st_size)), BigInt(sym.st_value.value), flags);
+						const flags	= sym.st_info.type === 'FUNC' ? section.data.flags : section.data.flags & ~MappedMemory.EXECUTE;
+						sym.data = new MappedMemory(section.data.data.subarray(offset, offset + Number(sym.st_size)), BigInt(sym.st_value.value), flags);
 					}
 					return [bin.utils.decodeTextTo0(names.subarray(sym.st_name), 'utf8'), sym] as [string, typeof sym];
 				});

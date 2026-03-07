@@ -1,4 +1,5 @@
 import * as bin from '@isopodlabs/binary';
+import { MappedMemory } from './common';
 import * as pe from './pe';
 
 //-----------------------------------------------------------------------------
@@ -496,7 +497,7 @@ export class CLR {
 				table_counts[i] = bin.UINT32_LE.get(stream);
 			}
 
-			this.raw 		= stream.remainder();
+			this.raw 		= bin.remainder(stream);
 			const stream1 	= new clr_dummy(this.table_info.HeapSizes, table_counts);
 			let offset 		= 0;
 
@@ -543,7 +544,7 @@ export class CLR {
 				if (i.name == block) {
 					const data0 	= new bin.stream(this.Resources.subarray(i.data));
 					const size 		= bin.UINT32_LE.get(data0);
-					return getResources(data0.read_buffer(size));
+					return getResources(bin.read_buffer(data0,size));
 				}
 			}
 		}
@@ -559,7 +560,7 @@ export class CLR {
 			for (const i of this.getTable(TABLE.ManifestResource)!) {
 				const data0 	= new bin.stream(this.Resources.subarray(i.data));
 				const size 		= bin.UINT32_LE.get(data0);
-				const resources = getResources(data0.read_buffer(size));
+				const resources = getResources(bin.read_buffer(data0, size));
 				if (resources)
 					Object.assign(result, resources);
 			}
@@ -603,7 +604,7 @@ pe.DIRECTORIES.CLR_DESCRIPTOR.read = (pe: pe.PE, data: binary.MappedMemory) => {
 	return Object.fromEntries(Object.entries(clr.tables).map(([k, v]) => [TABLE[+k], fix_names(clr.getTable(+k)!)]));
 };
 */
-export function ReadCLR(pe: pe.PE, data: bin.MappedMemory) {
+export function ReadCLR(pe: pe.PE, data: MappedMemory) {
 	function fix_names(table: any[]) {
 		if ('name' in table[0])
 			return Object.fromEntries(table.map(i => [i.name, i]));

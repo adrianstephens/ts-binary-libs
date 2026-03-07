@@ -18,10 +18,10 @@
 		"README.md"
 	],
 	"scripts": {
+		"postinstall": "ts-patch install && copy-file node_modules/@isopodlabs/binary/scripts/transform.ts scripts/transform.ts",
 		"build": "tsc",
-		"watch": "tsc -watch -p ./",
+		"watch": "tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
-		"patch": "ts-patch install",
 		"link": "npm link @isopodlabs/binary"
 	},
 	"keywords": [
@@ -44,6 +44,6 @@
 	},
 	"version": "1.3.0",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.6.0"
+		"@isopodlabs/binary": "^1.7.1"
 	}
 }

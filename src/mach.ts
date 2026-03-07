@@ -1,12 +1,13 @@
 import * as bin from '@isopodlabs/binary';
+import { MappedMemory, memory } from './common';
 
-class mach_stream extends bin.endianStream {
-	constructor(public base: Uint8Array, data: Uint8Array, be: boolean, public memflags: number, public mem?: bin.memory) { super(data, be); }
+class mach_stream extends bin.stream {
+	constructor(public base: Uint8Array, data: Uint8Array, be: boolean, public memflags: number, public mem?: memory) { super(data, be); }
 	subdata(offset: number, size?: number) {
 		return this.base.subarray(offset, size && offset + size);
 	}
 	substream(offset: number, size?: number) {
-		return new mach_stream(this.base, this.subdata(offset, size), this.be, this.memflags, this.mem);
+		return new mach_stream(this.base, this.subdata(offset, size), this.be!, this.memflags, this.mem);
 	}
 	getmem(address: bigint, size: number) {
 		return this.mem?.get(address, size);
@@ -300,7 +301,7 @@ export enum CMD {
 const str = {
 	get(s: bin.stream) {
 		const off = uint32.get(s);	// offset to the string
-		return bin.utils.decodeTextTo0(s.buffer_at(off - 8), 'utf8');
+		return bin.utils.decodeTextTo0(bin.buffer_at(s, off - 8), 'utf8');
 	}
 };
 
@@ -314,7 +315,7 @@ const blob = {
 		const offset	= uint32.get(s);
 		const size		= uint32.get(s);
 		if (size)
-			return s.subdata(offset, size);//.buffer_at(offset, size);
+			return bin.buffer_at(s, offset, size);
 	}
 };
 
@@ -417,13 +418,13 @@ function section(bits: 32|64) {
 		reserved2:	uint32,		// reserved (for count or sizeof)
 		_:			bin.AlignType(bits / 8)
 	}) {
-		data:	Promise<bin.MappedMemory>;
+		data:	Promise<MappedMemory>;
 		constructor(s: mach_stream) {
 			super(s);
-			const prot	= this.flags.ATTRIBUTES.SYS.SOME_INSTRUCTIONS ? bin.MappedMemory.EXECUTE | s.memflags : s.memflags;
+			const prot	= this.flags.ATTRIBUTES.SYS.SOME_INSTRUCTIONS ? MappedMemory.EXECUTE | s.memflags : s.memflags;
 			this.data 	= (async () =>
 				//new binary.utils.MappedMemory(await s.file.get(BigInt(this.addr), Number(this.size)), Number(this.addr), prot)
-				new bin.MappedMemory(s.subdata(+this.offset, Number(this.size)), BigInt(this.addr.value), prot)
+				new MappedMemory(s.subdata(+this.offset, Number(this.size)), BigInt(this.addr.value), prot)
 			)();
 		}
 	}
@@ -440,7 +441,7 @@ const SEGMENT_FLAGS = {
 function segment<T extends 32|64>(bits: T) {
 	const type		= bin.asHex(bin.UINT(bits));
 	const fields	= {
-		data:		bin.DontRead<bin.MappedMemory>(),
+		data:		bin.DontRead<MappedMemory>(),
 		segname: 	fixed_string16,	// segment name
 		vmaddr:		type,		// memory address of this segment
 		vmsize:		type,		// memory size of this segment
@@ -458,7 +459,7 @@ function segment<T extends 32|64>(bits: T) {
 
 			async function load() {
 				const data = await s.getmem(BigInt(Number(o.vmaddr)), Number(o.filesize)) ?? s.subdata(Number(o.fileoff), Number(o.filesize));
-				o.data = new bin.MappedMemory(data, BigInt(o.vmaddr.value), o.initprot | s.memflags);
+				o.data = new MappedMemory(data, BigInt(o.vmaddr.value), o.initprot | s.memflags);
 
 				//const sect = section(bits);
 				if (o.nsects) {
@@ -831,9 +832,9 @@ class dyld_chained_fixups extends bin.ReadClass({
 	}),
 }) {
 	imports2;
-	constructor(s: bin.endianStream) {
+	constructor(s: bin.stream) {
 		super(s);
-		const imports = new bin.endianStream(this.imports, s.be);
+		const imports = new bin.stream(this.imports, s.be);
 		switch (this.imports_format) {
 			case 'IMPORT': {
 				this.imports2 = bin.withNames(bin.readn(imports, dyld_chained_import, this.imports_count), imp => bin.utils.decodeTextTo0(this.symbols.subarray(Number(imp.name_offset))));
@@ -1040,7 +1041,7 @@ export class MachFile {
 	header!: bin.ReadType<typeof header>;
 	commands:{cmd:CMD, data:any}[]	= [];
 
-	constructor(data: Uint8Array, mem?: bin.memory) {
+	constructor(data: Uint8Array, mem?: memory) {
 		const magic	= bin.UINT32_LE.get(new bin.stream(data));
 		switch (magic) {
 			case 0xfeedface:	this.load(data, false, 32, mem); break;
@@ -1051,17 +1052,17 @@ export class MachFile {
 		}
 	}
 
-	load(data: Uint8Array, be: boolean, bits: 32|64, mem?: bin.memory) {
-		const file	= new bin.endianStream(data, be);
+	load(data: Uint8Array, be: boolean, bits: 32|64, mem?: memory) {
+		const file	= new bin.stream(data, be);
 		const h 	= bin.read(file, header);
 		const cpu	= CPU_TYPE[h.cputype as keyof typeof CPU_TYPE];
 		h.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+h.cpusubtype);
 		if (bits === 64)
-			file.skip(4);
+			file.seek(file.tell() + 4);
 
 		for (let i = 0; i < h.ncmds; ++i) {
 			const cmd	= bin.read(file, command);
-			const file2	= new mach_stream(data, file.read_buffer(cmd.cmdsize - 8), file.be, h.filetype === 'EXECUTE' ? 0: bin.MappedMemory.RELATIVE, mem);
+			const file2	= new mach_stream(data, bin.read_buffer(file, cmd.cmdsize - 8), file.be!, h.filetype === 'EXECUTE' ? 0: MappedMemory.RELATIVE, mem);
 			const result = bin.read(file2, cmd_table[cmd.cmd] ?? {});
 			this.commands.push({cmd: cmd.cmd, data: result});
 		}
@@ -1111,21 +1112,21 @@ export class FATMachFile {
 		}
 	}
 	
-	constructor(data: Uint8Array, mem?: bin.memory) {
+	constructor(data: Uint8Array, mem?: memory) {
 		switch (bin.UINT32_BE.get(new bin.stream(data))) {
-			case FAT_MAGIC:		this.load(new bin.endianStream(data, true), mem); break;
-			case FAT_CIGAM:		this.load(new bin.endianStream(data, false), mem); break;
+			case FAT_MAGIC:		this.load(new bin.stream(data, true), mem); break;
+			case FAT_CIGAM:		this.load(new bin.stream(data, false), mem); break;
 			default:
 				throw new Error('not a fat mach file');
 		}
 	}
 
-	load(file: bin.endianStream, mem?: bin.memory) {
+	load(file: bin.stream, mem?: memory) {
 		const header = bin.read(file, fat_header);
 		this.archs = header.archs;
 		for (const arch of header.archs) {
 			const cpu	= CPU_TYPE[arch.cputype as keyof typeof CPU_TYPE];
-			const data	= file.buffer_at(arch.offset, arch. size);
+			const data	= bin.buffer_at(file, arch.offset, arch. size);
 			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+arch.cpusubtype);
 			arch.contents	= new MachFile(data, mem);
 		}

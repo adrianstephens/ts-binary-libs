@@ -1,6 +1,6 @@
 {
 	"compilerOptions": {
-		"composite": true,
+		//"composite": true,
 		"target": "ES2022",
 		"module": "commonjs",
 		"strict": true,
@@ -11,6 +11,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"sourceMap": true,
 		"outDir": "./dist",
+		"rootDir": "src",
 		"plugins": [
 			{
 				"transform": "./scripts/transform.ts",

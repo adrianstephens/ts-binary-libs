@@ -1,12 +1,14 @@
-import { Reader, DirEntry } from 'src/CompoundDocument';
-
+import { Directory, Reader, Backing, TYPE } from '../dist/CompoundDocument';
+import { promises as fs } from 'fs';
 import https from 'https';
 
-function dumpDirectory(r: Reader, dir: DirEntry, indent: number) {
-	for (const entry of r.list(dir)) {
+function dumpDirectory(dir: Directory, indent: number) {
+	for (const entry of dir.entries()) {
 		console.log(' '.repeat(indent) + entry.name);
+		if (entry.is(TYPE.Property))
+			console.log(' '.repeat(indent + 2) + `property!`);
 		if (entry.is_directory())
-			dumpDirectory(r, entry, indent + 2);
+			dumpDirectory(entry, indent + 2);
 	}
 }
 
@@ -44,15 +46,56 @@ function downloadFile(url: string) {
 	);
 }
 
+class FileBacking implements Backing {
+	private fd;
+
+	constructor(filename: string) {
+		this.fd = fs.open(filename, fs.constants.O_RDWR | fs.constants.O_CREAT);
+	}
+	async readAt(offset: number, data: Uint8Array) : Promise<number> {
+		const fd = await this.fd;
+		const read = await fd.read(data, 0, data.length, offset);
+		return read.bytesRead;
+	}
+	async writeAt(offset: number, data: Uint8Array) {
+		const fd = await this.fd;
+		await fd.write(data, 0, data.length, offset);
+	}
+
+	async close() {
+		const fd = await this.fd;
+		await fd.close();
+	}
+}
+
 
 (async () => {
 
-	const reader = Reader.create();
-	await reader.flush('test-compound.doc');
+	const reader = await Reader.loadBacking(new FileBacking('test-compound.doc'));
+	let configStream = reader.find("SolutionConfiguration");
+	if (!configStream) {
+		await reader.root.addStream("SolutionConfiguration", new Uint8Array([1, 2, 3, 4]));
+		configStream = reader.find("SolutionConfiguration");
+		console.log('Created stream:', configStream?.name);
+		//
+	} else {
+		//if (configStream?.is_data()) {
+		//	const data = await configStream?.read();
+		//	console.log('Read data:', data);
+		//}
+	}
+	await reader.flush();
 	console.log('File written successfully');
 
-	const reader1 = await Reader.load('test-compound.doc');
-
+//	const reader1 = await fs.readFile('test-compound.doc').then(bytes => Reader.loadBuffer(bytes));
+	const reader1 = await Reader.loadBuffer(await fs.readFile('test-compound.doc'));
+	if (reader1) {
+		const configStream1 = reader1.find("SolutionConfiguration");
+		if (configStream1?.is_data()) {
+			const data = await configStream1?.read();
+			console.log('Read data:', data);
+		}
+	}
 
 	// List of OLE test files from oletools
 	const files = await listGithubFiles('https://api.github.com/repos/decalage2/oletools/contents/tests/test-data');
@@ -63,7 +106,7 @@ function downloadFile(url: string) {
 			const reader = await Reader.loadBuffer(data);
 			if (reader) {
 				console.log(`\n=== Directory tree for ${file.name} ===`);
-				dumpDirectory(reader, reader.root, 0);
+				dumpDirectory(reader.root, 0);
 			} else {
 				console.log(`\nCould not parse ${file.name} as a compound document.`);
 			}
@@ -71,11 +114,6 @@ function downloadFile(url: string) {
 			console.log(`\nFailed to process ${file.name}:`, e);
 		}
 	}
-
-	const reader0 = await Reader.load('C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\arm\\adplus.doc');
-	if (reader0)
-		dumpDirectory(reader0, reader0.root, 0);
-
 
 })().catch(err => {
 	console.error('Error:', err);

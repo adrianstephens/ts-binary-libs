@@ -1,4 +1,5 @@
 import * as bin from '@isopodlabs/binary';
+import { MappedMemory } from './common';
 import { ReadCLR } from './clr';
 
 class MyDate extends Date {
@@ -109,20 +110,20 @@ export class Section extends bin.ReadClass({
 	NumberOfLinenumbers:	bin.INT16_LE,
 	Characteristics:		bin.asFlags(uint32, SECTION_CHARACTERISTICS)
 }) {
-	data?: bin.MappedMemory;
+	data?: MappedMemory;
 	constructor(r: bin.stream) {
 		super(r);
 		try {
-			this.data = new bin.MappedMemory(r.buffer_at(+this.PointerToRawData, this.SizeOfRawData), BigInt(this.VirtualAddress.value), this.flags);
+			this.data = new MappedMemory(bin.buffer_at(r, +this.PointerToRawData, this.SizeOfRawData), BigInt(this.VirtualAddress.value), this.flags);
 		} catch (e) {
 			console.log(e);
 		}
 	}
 	get flags() {
-		return bin.MappedMemory.RELATIVE
-			| (this.Characteristics.MEM_READ	? bin.MappedMemory.READ 		: 0)
-			| (this.Characteristics.MEM_WRITE	? bin.MappedMemory.WRITE 	: 0)
-			| (this.Characteristics.MEM_EXECUTE	? bin.MappedMemory.EXECUTE	: 0);
+		return MappedMemory.RELATIVE
+			| (this.Characteristics.MEM_READ	? MappedMemory.READ 		: 0)
+			| (this.Characteristics.MEM_WRITE	? MappedMemory.WRITE 	: 0)
+			| (this.Characteristics.MEM_EXECUTE	? MappedMemory.EXECUTE	: 0);
 	}
 }
 
@@ -199,11 +200,11 @@ const RVA_STRING = {
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY16 = {
-	get(s: pe_stream)	{ return bin.utils.to16(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.utils.as16(s.get_rva()); },
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY32 = {
-	get(s: pe_stream)	{ return bin.utils.to32(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.utils.as32(s.get_rva()); },
 	put(_s: pe_stream)	{}
 };
 
@@ -233,10 +234,10 @@ const EXE_HEADER = {
 };
 
 interface DirectoryInfo {
-	read: (pe: PE, data: bin.MappedMemory) => unknown;
+	read: (pe: PE, data: MappedMemory) => unknown;
 }
 const NoInfo: DirectoryInfo = {
-	read: (pe: PE, data: bin.MappedMemory) => data
+	read: (pe: PE, data: MappedMemory) => data
 };
 
 export const DIRECTORIES = {
@@ -258,7 +259,7 @@ export const DIRECTORIES = {
 } as const satisfies Record<string, DirectoryInfo>;
 
 type DirectoryName	= keyof typeof DIRECTORIES;
-type DirectoryReadResult<T extends DirectoryName> = typeof DIRECTORIES[T] extends {read: (pe: PE, data: bin.MappedMemory) => infer R} ? R : bin.MappedMemory | undefined;
+type DirectoryReadResult<T extends DirectoryName> = typeof DIRECTORIES[T] extends {read: (pe: PE, data: MappedMemory) => infer R} ? R : MappedMemory | undefined;
 
 export const DATA_DIRECTORY = {
 	VirtualAddress: 			uint32,
@@ -366,7 +367,7 @@ export class PE {
 			const h = bin.read(file, FILE_HEADER);
 
 			if (h.SizeOfOptionalHeader) {
-				const opt	= new bin.stream(file.read_buffer(h.SizeOfOptionalHeader));
+				const opt	= new bin.stream(bin.read_buffer(file, h.SizeOfOptionalHeader));
 				const opt1	= bin.read(opt, OPTIONAL_HEADER);
 				if (opt1.Magic == 'NT32')
 					this.opt = bin.read_more(opt, OPTIONAL_HEADER32, opt1);
@@ -384,6 +385,11 @@ export class PE {
 		return this.opt?.DataDirectory;
 	}
 
+	get directories2() {
+		const dirs = this.directories;
+		if (dirs)
+			return Object.fromEntries(Object.keys(dirs).map(dir => [dir, this.ReadDirectory(dir as DirectoryName)]));
+	}
 	FindSectionRVA(rva: number) {
 		for (const i of this.sections) {
 			if (rva >= +i.VirtualAddress && rva < +i.VirtualAddress + i.SizeOfRawData)
@@ -484,9 +490,10 @@ export class DLLImports extends Array {}
 
 const RVA_ITA64 = {
 	get(s: pe_stream)	{ 
-		const r = bin.utils.to64(s.get_rva());
+		const r = bin.utils.as64(s.get_rva());
 		if (r) {
-			const result = Array.from(r.subarray(0, r.indexOf(0n)), i =>
+			const end = r.indexOf(0n);
+			const result = Array.from(end < 0 ? r : r.subarray(0, end), i =>
 				i >> 63n
 					? `ordinal_${i - (1n << 63n)}`
 					: bin.utils.decodeTextTo0(s.pe.GetDataRVA(Number(i))?.data.subarray(2), 'utf8')
@@ -508,11 +515,15 @@ const IMPORT_DESCRIPTOR = {
 
 export function ReadImports(file: pe_stream) {
 	const result: [string, any][] = [];
-	while (file.remaining()) {
-		const r = bin.read(file, IMPORT_DESCRIPTOR);
-		if (!r.Characteristics)
+	for (;;) {
+		try {
+			const r = bin.read(file, IMPORT_DESCRIPTOR);
+			if (!r.Characteristics)
+				break;
+			result.push([r.DllName, r.FirstThunk]);
+		} catch (_e) {
 			break;
-		result.push([r.DllName, r.FirstThunk]);
+		}
 	}
 	return result;
 }
@@ -578,7 +589,7 @@ export function ReadResourceDirectory(file: pe_stream, type = 0) {
 	const result : Record<string, any> = {};
 
 	for (const i of dir.entries) {
-		const id = i.u0 & topbit ? id_type.get(file.seek(i.u0 & ~topbit)) : !type ? IRT[i.u0 as keyof typeof IRT] : i.u0;
+		const id = i.u0 & topbit ? id_type.get((file.seek(i.u0 & ~topbit), file)) : !type ? IRT[i.u0 as keyof typeof IRT] : i.u0;
 		
 		file.seek(i.u1 & ~topbit);
 		result[id]	= i.u1 & topbit
