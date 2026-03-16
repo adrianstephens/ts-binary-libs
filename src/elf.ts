@@ -31,7 +31,7 @@ const Ident = {
 		//64 bit only
 		osabi: 		bin.asEnum(bin.UINT8, OSABI),
 		abiversion: bin.UINT8,
-		pad:		bin.ArrayType(7, bin.UINT8),
+		pad:		bin.Array(7, bin.UINT8),
 	})
 };
 
@@ -619,7 +619,7 @@ function Pair(top: bin.Type, bottom: bin.Type, be: boolean) {
 }
 function readDataAs<T extends bin.Type>(data: MappedMemory | undefined, type: T) {
 	if (data)
-		return bin.RemainingArrayType(type).get(new bin.stream(data.data));
+		return bin.RemainingArray(type).get(new bin.stream(data.data));
 }
 
 export class ELFFile {
@@ -697,7 +697,7 @@ export class ELFFile {
 							| (this.p_flags.R ? MappedMemory.READ : 0)
 							| (this.p_flags.W ? MappedMemory.WRITE : 0)
 							| (this.p_flags.X ? MappedMemory.EXECUTE : 0);
-				this.data = new MappedMemory(bin.buffer_at(s, Number(this.p_offset), Number(this.p_filesz)), BigInt(this.p_vaddr.value), flags);
+				this.data = new MappedMemory(s.view_at(Uint8Array, Number(this.p_offset), Number(this.p_filesz)), BigInt(this.p_vaddr.value), flags);
 			}
 		}
 
@@ -719,7 +719,7 @@ export class ELFFile {
 				const flags = MappedMemory.RELATIVE | MappedMemory.READ
 							| (this.sh_flags.WRITE ? MappedMemory.WRITE : 0)
 							| (this.sh_flags.EXECINSTR ? MappedMemory.EXECUTE : 0);
-				const buffer = this.sh_type === 'NOBITS' ? new Uint8Array(0) : bin.buffer_at(s, Number(this.sh_offset), Number(this.sh_size));
+				const buffer = this.sh_type === 'NOBITS' ? new Uint8Array(0) : s.view_at(Uint8Array, Number(this.sh_offset), Number(this.sh_size));
 				this.data = new MappedMemory(buffer, BigInt(this.sh_addr.value), flags);
 			}
 		}
@@ -757,7 +757,7 @@ export class ELFFile {
 		this.getRelA	= () => readDataAs(sh.find(i => i.sh_type === 'RELA')?.data, Rela);
 
 		const Sym = {
-			data:		bin.DontRead<MappedMemory>(),
+			data:		bin.Const<MappedMemory|undefined>(undefined),
 			st_name:	Word,			//index into the object file's symbol string table
 			...(bits === 32 ? {
 				st_value:	Addr,			//value of the associated symbol

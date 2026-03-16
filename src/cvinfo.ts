@@ -23,7 +23,7 @@ const octword = bin.Buffer(32);
 const uoctword = bin.Buffer(32);
 
 const date = bin.Float64_LE; // double
-const stringz = bin.NullTerminatedStringType();
+const stringz = bin.NullTerminatedString();
 
 // 96-bit unsigned integer with power of 10 scaling factor
 export class Decimal extends bin.Class({
@@ -74,7 +74,7 @@ function skip(s: bin._stream, len: number) {
 
 const CVCompressed: bin.TypeT<number> = {
 	get(s: bin._stream) 				{
-		const buffer	= bin.remainder(s);
+		const buffer	= s.remainder();
 		const b0		= buffer[0];
 		
 		if ((b0 & 0x80) === 0x00) {
@@ -97,16 +97,16 @@ const CVCompressed: bin.TypeT<number> = {
 	},
 	put(s: bin._stream, v: number)	{
 		if (v <= 0x7F) {
-			bin.write_buffer(s, new Uint8Array([v]));
+			s.write_view(new Uint8Array([v]));
 
 		} else if (v <= 0x3FFF) {
-			bin.write_buffer(s, new Uint8Array([
+			s.write_view(new Uint8Array([
 				((v >> 8) | 0x80) & 0xFF,
 				v & 0xFF
 			]));
 
 		} else if (v <= 0x1FFFFFFF) {
-			bin.write_buffer(s, new Uint8Array([
+			s.write_view(new Uint8Array([
 				((v >> 24) | 0xC0) & 0xFF,
 				(v >> 16) & 0xFF,
 				(v >> 8) & 0xFF,
@@ -894,7 +894,7 @@ enum SYM_ENUM_e {
 const SYMTYPE = {
 	reclen: uint16,
 	rectyp: bin.asEnum(uint16, SYM_ENUM_e),
-	data: bin.SizeType(field('reclen'), bin.Switch(field('rectype'), {
+	data: bin.Size(field('reclen'), bin.Switch(field('rectype'), {
 		// Register symbol
 		S_REGSYM: {
 			typind: type_t,
@@ -980,10 +980,10 @@ const LineInfo = {
 // Subsection base structure
 const SubSection = {
 	type:	uint32,
-	data:	bin.SizeType(int32, bin.Switch(field('type'), {
-		[DEBUG_S.SYMBOLS]: bin.RemainingArrayType(SYMTYPE),
-		[DEBUG_S.LINES]: bin.RemainingArrayType(LineInfo),
-		[DEBUG_S.STRINGTABLE]: bin.RemainingArrayType(stringz),
+	data:	bin.Size(int32, bin.Switch(field('type'), {
+		[DEBUG_S.SYMBOLS]: bin.RemainingArray(SYMTYPE),
+		[DEBUG_S.LINES]: bin.RemainingArray(LineInfo),
+		[DEBUG_S.STRINGTABLE]: bin.RemainingArray(stringz),
 		[DEBUG_S.FILECHKSMS]: bin.Remainder,
 		[DEBUG_S.FRAMEDATA]: bin.Remainder,
 		[DEBUG_S.INLINEELINES]: bin.Remainder,

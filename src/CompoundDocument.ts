@@ -1,57 +1,19 @@
 import * as bin from '@isopodlabs/binary';
+export * as ole from './ole';
 
-function shiftRound(value: number, shift: number) {
+function shiftCeil(value: number, shift: number) {
 	return (value + (1 << shift) - 1) >> shift;
 }
 
-//-----------------------------------------------------------------------------
-//	Caching SectorStore with optional backing store
-//-----------------------------------------------------------------------------
-
 export interface Backing {
-	readAt(offset: number, data: Uint8Array): Promise<number>;
+	readAt(offset: number, size: number): Promise<Uint8Array>;
 	writeAt(offset: number, data: Uint8Array): Promise<void>;
 }
 
-export class Sectors {
-	sectors: 	Uint8Array[] = [];
-	dirty		= new Set<number>();
-
-	constructor(
-		public shift: number,
-		private offset = 512,
-		private backing?: Backing
-	) {}
-
-	size() {
-		return this.sectors.length << this.shift;
-	}
-
-	async sector(id: number) {
-		if (!this.sectors[id]) {
-			this.sectors[id] = new Uint8Array(1 << this.shift);
-			await this.backing?.readAt(this.offset + (id << this.shift), this.sectors[id]);
-		}
-		return this.sectors[id];
-	}
-
-	async dirty_sector(id: number) {
-		this.dirty.add(id);
-		return this.sector(id);
-	}
-
-	async writeHeader(data: Uint8Array) {
-		await this.backing?.writeAt(0, data);
-	}
-
-	async flush() {
-		for (const i of this.dirty.keys()) {
-			const offset = this.offset + (i << this.shift);
-			await this.backing?.writeAt(offset, this.sectors[i]);
-		}
-		this.dirty.clear();
-	}
-
+export interface Sectors {
+	shift: number;
+	sector(id: number)			: Promise<Uint8Array>;
+	dirty_sector(id: number)	: Promise<Uint8Array>;
 }
 
 async function read_chain(sectors: Sectors, chain: number[], dest: Uint8Array) {
@@ -70,6 +32,17 @@ async function read_chain_alloc(sectors: Sectors, chain: number[]) {
 	return dest;
 }
 
+async function write_chain(sectors: Sectors, chain: number[], source: Uint8Array) {
+	for (const i in chain) {
+		const offset	= +i << sectors.shift;
+		if (offset >= source.length)
+			break;
+		const sector = await sectors.dirty_sector(chain[i]);
+		if (sector)
+			sector.set(source.subarray(offset, offset + (1 << sectors.shift)), 0);
+	}
+}
+
 //-----------------------------------------------------------------------------
 //	Master sector allocation table (MSAT) and sector allocation table (SAT)
 //-----------------------------------------------------------------------------
@@ -85,7 +58,7 @@ class FAT {
 	freed:	number[] = [];
 	dirty	= new Set<number>();
 
-	constructor(public fat: bin.utils.TypedArray<number>, public fat_shift: number, public data: Sectors) {
+	constructor(public fat: Int32Array, public fat_shift: number, public sectors: Sectors) {
 	}
 
 	private free(id: number) {
@@ -104,7 +77,7 @@ class FAT {
 			if (!this.freed.length) {
 				// resize fat
 				let fatbuff = this.fat.buffer;
-				const size1	= shiftRound(size0 + 1, this.fat_shift) << this.fat_shift;
+				const size1	= shiftCeil(size0 + 1, this.fat_shift) << this.fat_shift;
 				if (size1 >= fatbuff.byteLength / 4) {
 					fatbuff	= new ArrayBuffer(Math.max(fatbuff.byteLength * 2, size1 * 4));
 					new Int32Array(fatbuff).set(this.fat);
@@ -131,7 +104,7 @@ class FAT {
 	}
 
 	resize_chain(chain: number[], data_size: number) {
-		const size = shiftRound(data_size, this.data.shift);
+		const size = shiftCeil(data_size, this.sectors.shift);
 		while (chain.length > size)
 			this.free(chain.pop()!);
 
@@ -145,64 +118,47 @@ class FAT {
 			}
 		}
 	}
-
-	clear_dirty() {
+	async flush(to: FAT, chain: number[]) {
+		for (const i of this.dirty.keys()) {
+			const sector = await to.dirty_sector(chain[i]);
+			sector?.set(bin.utils.as8(this.fat.subarray(i << this.fat_shift, (i + 1) << this.fat_shift)));
+		}
 		this.dirty.clear();
 	}
 
 	async sector(id: number) {
-		if (id >= this.fat.length || this.fat[id] == SecID.FREE)
-			return null;
-		return this.data.sector(id);
+		if (id < this.fat.length && this.fat[id] !== SecID.FREE)
+			return this.sectors.sector(id);
 	}
 	async chain_part(chain: number[], offset: number) {
-		const index = offset >> this.data.shift;
+		const index = offset >> this.sectors.shift;
 		if (index >= chain.length)
 			this.resize_chain(chain, offset + 1);
-		return (await this.sector(chain[index]))?.subarray(offset & ((1 << this.data.shift) - 1));
+		return (await this.sector(chain[index]))?.subarray(offset & ((1 << this.sectors.shift) - 1));
 	}
 
 	async dirty_sector(id: number) {
-		if (id >= this.fat.length || this.fat[id] == SecID.FREE)
-			return null;
-		return this.data.dirty_sector(id);
+		if (id < this.fat.length && this.fat[id] !== SecID.FREE)
+			return this.sectors.dirty_sector(id);
 	}
 	async dirty_chain_part(chain: number[], offset: number) {
-		const index = offset >> this.data.shift;
+		const index = offset >> this.sectors.shift;
 		if (index >= chain.length)
 			this.resize_chain(chain, offset + 1);
-		return (await this.dirty_sector(chain[index]))?.subarray(offset & ((1 << this.data.shift) - 1));
+		return (await this.dirty_sector(chain[index]))?.subarray(offset & ((1 << this.sectors.shift) - 1));
 	}
 	
-	async read_chain(chain: number[], dest: Uint8Array) {
-		for (const i in chain) {
-			const offset	= +i << this.data.shift;
-			if (offset >= dest.length)
-				break;
-			const sector = await this.sector(chain[i]);
-			if (sector)
-				dest.set(sector.subarray(0, dest.length - offset), offset);
-		}
+	read_chain(chain: number[], dest: Uint8Array) {
+		return read_chain(this.sectors, chain, dest);
 	}
 
-	async write_chain(chain: number[], source: Uint8Array) {
-		for (const i in chain) {
-			const offset	= +i << this.data.shift;
-			if (offset >= source.length)
-				break;
-			const sector = await this.dirty_sector(chain[i]);
-			if (sector)
-				sector.set(source.subarray(offset, offset + (1 << this.data.shift)), 0);
-		}
+	read_chain_alloc(chain: number[]) {
+		return read_chain_alloc(this.sectors, chain);
 	}
 
-	async write(id: number, source: Uint8Array) {
-		const chain = this.get_chain(id);
-		this.resize_chain(chain, source.length);
-		await this.write_chain(chain, source);
-		return chain[0];
+	write_chain(chain: number[], source: Uint8Array) {
+		return write_chain(this.sectors, chain, source);
 	}
-
 }
 
 //-----------------------------------------------------------------------------
@@ -217,8 +173,7 @@ export class Header extends bin.Class({
 	byteorder:			bin.UINT16_LE,
 	sector_shift:		bin.UINT16_LE,
 	mini_shift:			bin.UINT16_LE,
-	unused1:			bin.SkipType(6),
-	num_directory:		bin.UINT32_LE,
+	num_directory:		bin.AfterSkip(6, bin.UINT32_LE),
 	num_fat:			bin.UINT32_LE,
 	first_directory:	bin.INT32_LE,
 	transaction:		bin.Expect(bin.UINT32_LE, 0),
@@ -229,74 +184,80 @@ export class Header extends bin.Class({
 	num_difat:			bin.UINT32_LE,
 	difat:				bin.Buffer(109, Int32Array),
 }) {
-	sector_size()				{ return 1 << this.sector_shift; }
-	use_mini(size: number)		{ return size < this.mini_cutoff; }
 }
 
 //-----------------------------------------------------------------------------
 //	Compound Document
 //-----------------------------------------------------------------------------
 
+class MasterSectors implements Sectors {
+	sectors: 	Uint8Array[] = [];
+	dirty		= new Set<number>();
+
+	constructor(public shift: number, private backing: Backing) {}
+
+	async sector(id: number) {
+		if (!this.sectors[id])
+			this.sectors[id] = await this.backing.readAt(512 + (id << this.shift), 1 << this.shift);
+		return this.sectors[id];
+	}
+
+	async dirty_sector(id: number) {
+		this.dirty.add(id);
+		return this.sector(id);
+	}
+
+	async writeHeader(data: Uint8Array) {
+		await this.backing.writeAt(0, data);
+	}
+
+	async flush() {
+		for (const i of this.dirty.keys())
+			await this.backing.writeAt(512 + (i << this.shift), this.sectors[i]);
+		this.dirty.clear();
+	}
+}
+
 class Master {
-	static async load<T extends Master>(this: new (...args: any[]) => T, header: Header, sectors: Sectors) {
-		const 	shift	= header.sector_shift;
-		const	sat_per_difat = (1 << (shift - 2)) - 1;
+	sectors:	MasterSectors;
+	fat!: FAT;
+	fat_chain:	number[] = [];
+	difat_chain: number[] = [];
 
-		const 	num_fat	= header.num_fat;
-		const	fat_chain = Array.from(header.difat.subarray(0, num_fat));
-		const	difat_chain: number[] = [];
+	constructor(public header: Header, backing: Backing) {
+		this.sectors = new MasterSectors(this.header.sector_shift, backing);
+	}
 
-		let 	next	= header.first_difat;
-		for (let i = 0; i < header.num_difat; i++) {
-			difat_chain.push(next);
-			const data	= bin.utils.as32(await sectors.sector(next));
-			next 		= data[sat_per_difat];
-			fat_chain.push(...Array.from(data.subarray(0, Math.min(sat_per_difat, num_fat - fat_chain.length))));
+	async load() {
+		const 	num_fat		= this.header.num_fat;
+		
+		this.fat_chain	= Array.from(this.header.difat.subarray(0, num_fat));
+
+		// read difat chain
+		const	sat_per_difat = (1 << (this.header.sector_shift - 2)) - 1;
+		let 	next	= this.header.first_difat;
+		for (let i = 0; i < this.header.num_difat; i++) {
+			this.difat_chain.push(next);
+			const difat	= bin.utils.as32(await this.sectors.sector(next));
+			next 		= difat[sat_per_difat];
+			this.fat_chain.push(...Array.from(difat.subarray(0, Math.min(sat_per_difat, num_fat - this.fat_chain.length))));
 		}
 
-		const fat		= new FAT(
-			bin.utils.as32s(await read_chain_alloc(sectors, fat_chain)),
-			shift - 2, sectors
+		this.fat = new FAT(
+			bin.utils.as32s(await read_chain_alloc(this.sectors, this.fat_chain)),
+			this.header.sector_shift - 2,
+			this.sectors
 		);
-		const mini_fat	= new FAT(
-			bin.utils.as32s(await read_chain_alloc(sectors, fat.get_chain(header.first_mini))),
-			shift - 2, new Sectors(header.mini_shift, 0)
-		);
-
-		return new this(header, fat, mini_fat, fat_chain, difat_chain);
-	}
-
-	constructor(public header: Header, public fat: FAT, public mini_fat: FAT, public fat_chain: number[], public difat_chain: number[]) {
-	}
-
-	get_fat(mini: boolean) {
-		return mini ? this.mini_fat : this.fat;
 	}
 
 	async flush(dirty_header = false) {
 		const 	shift	= this.header.sector_shift;
 
-		// update mini fat
-		const num_mini		= shiftRound(this.mini_fat.fat.length, shift - 2);
-		const mini_chain	= this.fat.get_chain(this.header.first_mini);
-		if (num_mini > this.header.num_mini) {
-			this.fat.resize_chain(mini_chain, num_mini << shift);
-			this.fat.write_chain(mini_chain, bin.utils.as8(this.mini_fat.fat));
-
-			this.header.first_mini	= mini_chain[0];
-			this.header.num_mini	= num_mini;
-			dirty_header		= true;
-		}
-
 		// add new fat sectors if needed
-		const num_fat		= shiftRound(this.fat.fat.length, shift - 2);
+		const num_fat		= shiftCeil(this.fat.fat.length, shift - 2);
 		if (num_fat > this.header.num_fat) {
-			for (let i = this.header.num_fat; i < num_fat; i++) {
-				const id = this.fat.alloc(SecID.SAT);
-				this.fat_chain.push(id);
-				const sector = await this.fat.dirty_sector(id);
-				sector?.set(bin.utils.as8(this.fat.fat).subarray(i << shift, (i + 1) << shift));
-			}
+			for (let i = this.header.num_fat; i < num_fat; i++)
+				this.fat_chain.push(this.fat.alloc(SecID.SAT));
 
 			this.header.num_fat	= num_fat;
 			dirty_header		= true;
@@ -307,49 +268,34 @@ class Master {
 			// add new difat sectors if needed
 			const sat_per_difat	= (1 << (shift - 2)) - 1;
 			const num_difat		= Math.ceil(Math.max(num_fat - 109, 0) / sat_per_difat);
+			
+			// Allocate and chain as many new DIFAT sectors as needed
+			for (let i = this.header.num_difat; i < num_difat; i++)
+				this.difat_chain[i] = this.fat.alloc(SecID.MSAT);
 
-			if (num_difat > this.header.num_difat) {
-				const id = this.fat.alloc(SecID.MSAT);
-				this.difat_chain.push(id);
-				if (this.difat_chain.length > 1) {
-					const sector = bin.utils.as32s((await this.fat.dirty_sector(this.difat_chain.at(-2)!))!);
-					sector[sat_per_difat] = id;
-				} else {
-					this.header.first_difat = id;
+			for (let i = Math.max(this.header.num_difat - 1, 0); i < num_difat; i++) {
+				const p = 109 + i * sat_per_difat;
+				const difat = bin.utils.as32s(await this.fat.dirty_sector(this.difat_chain[i]));
+				if (difat) {
+					difat.set(this.fat_chain.slice(p, p + sat_per_difat));
+					difat[sat_per_difat] = this.difat_chain[i + 1] ?? SecID.ENDOFCHAIN;
 				}
-				this.header.num_difat	= num_difat;
-				dirty_header		= true;
+			};
 
-				// update remaining difat sectors
-				let 	p		= 109;
-				for (let i = 0; i < this.difat_chain.length; i++) {
-					const sector = bin.utils.as32s((await this.fat.dirty_sector(this.difat_chain[i]))!);
-					sector.set(this.fat_chain.slice(p, p + sat_per_difat));
-					sector[sat_per_difat] = this.difat_chain[i + 1] ?? SecID.ENDOFCHAIN;
-					p += sat_per_difat;
-				}
-			}
+			this.header.first_difat = this.difat_chain[0] ?? SecID.ENDOFCHAIN;
+			this.header.num_difat	= num_difat;
 		}
 
+		await this.fat.flush(this.fat, this.fat_chain);
 
-		const dirty	= this.fat.data.dirty;
-
-		for (const i of this.fat.dirty.keys())
-			dirty.add(this.fat_chain[i]);
-
-		for (const i of this.mini_fat.dirty.keys())
-			dirty.add(mini_chain[i]);
-
-		if (dirty_header || dirty.size) {
+		if (dirty_header || this.sectors.dirty.size) {
 			if (dirty_header) {
 				const header_buf = new Uint8Array(512);
 				const header_stream = new bin.stream(header_buf);
 				this.header.write(header_stream);
-				await this.fat.data.writeHeader(header_buf);
+				await this.sectors.writeHeader(header_buf);
 			}
-			await this.fat.data.flush();
-			this.fat.clear_dirty();
-			this.mini_fat.clear_dirty();
+			await this.sectors.flush();
 		}
 	}
 }
@@ -372,8 +318,16 @@ type TYPE = typeof TYPE[keyof typeof TYPE];
 const RED = 0, BLACK = 1;
 type COLOUR = 0 | 1;
 
+function compare(a: any, b: any) {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function cmpName(a: string, b: string) {
+	return compare(a.length, b.length) || compare(a.toUpperCase(), b.toUpperCase());
+}
+
 const DirEntrySpec = {
-	name:			bin.StringType(32, 'utf16le'),
+	name:			bin.String(32, 'utf16le'),
 	name_size:		bin.UINT16_LE,
 	type:			bin.as(bin.UINT8, x => x as TYPE),
 	colour:			bin.as(bin.UINT8, x => x as COLOUR),
@@ -425,7 +379,7 @@ export class DirEntry extends Class<bin.ReadType<typeof DirEntrySpec>>() {
 			this.reader.rbRemove(this.dir, this);
 			this.name		= name;
 			this.name_size	= name.length * 2 + 2;
-			this.reader.rbInsert(this.dir, this);
+			this.dir.root	= this.reader.rbInsert(this.dir.root, this.reader.addEntry(this));
 		}
 	}
 	remove() {
@@ -450,29 +404,26 @@ export class Directory extends DirEntry {
 	*entries(): Generator<DirEntry> {
 		const entries = this.reader.entries;
 		const stack: number[] = [];
-		let		sp = 0;
+		let i = this.root;
 
-		for (let i = this.root;;) {
-			const e	= entries[i];
+		while (i != -1 || stack.length) {
+			while (i != -1) {
+				stack.push(i);
+				i = entries[i].left;
+			}
+
+			i = stack.pop()!;
+			const e = entries[i];
 			e.dir = this;
-
 			yield e;
 
-			if (e.right != -1)
-				stack[sp++] = e.right;
-
-			i = e.left;
-			if (i == -1) {
-				if (sp === 0)
-					break;
-				i = stack[--sp];
-			}
+			i = e.right;
 		}
 	}
 	private _addEntry(name: string, type: TYPE) {
 		const e = makeEntry(this.reader, name, type);
 		e.dir = this;
-		this.reader.rbInsert(this, e);
+		this.root = this.reader.rbInsert(this.root, this.reader.addEntry(e));
 		return e;
 	}
 	addEntry<T extends TYPE>(name: string, type: T) {
@@ -525,97 +476,71 @@ function makeEntry<T extends TYPE>(reader: Reader, name: string, type: T) {
 //-----------------------------------------------------------------------------
 
 export class Reader extends Master {
+	mini_fat!:	FAT;
 	entries:	DirEntry[]	= [];
-	chain:		number[]	= [];
-	pending	= Promise.resolve();
-	free 	= -1;
-/*
-	static async create(backing: Backing, shift = 9): Promise<Reader> {
-		return this.load1(await this.load0(new Header({
-			id:					new Uint8Array(16),
-			revision:			0x003E,
-			version:			3,
-			byteorder:			0xFFFE,
-			sector_shift:		shift,
-			mini_shift:			6,
-			unused1:			0 as unknown as void,
-			num_directory:		0,
-			num_fat:			0,
-			first_directory:	SecID.ENDOFCHAIN,
-			mini_cutoff:		4096,
-			first_mini:			SecID.ENDOFCHAIN,
-			num_mini:			0,
-			first_difat:		SecID.ENDOFCHAIN,
-			num_difat:			0,
-			difat:				(new Int32Array(109)).fill(SecID.FREE),
-		}), new Sectors(shift, 512, backing)));
-	}
-*/
-	static async loadBacking(backing: Backing): Promise<Reader> {
-		const buffer = new Uint8Array(512);
-		const read = await backing.readAt(0, buffer);
-		const h = read ? new Header(new bin.stream(buffer)) : new Header({
-			id:					new Uint8Array(16),
-			revision:			0x003E,
-			version:			3,
-			byteorder:			0xFFFE,
-			sector_shift:		9,
-			mini_shift:			6,
-			unused1:			0 as unknown as void,
-			num_directory:		0,
-			num_fat:			0,
-			first_directory:	SecID.ENDOFCHAIN,
-			mini_cutoff:		4096,
-			first_mini:			SecID.ENDOFCHAIN,
-			num_mini:			0,
-			first_difat:		SecID.ENDOFCHAIN,
-			num_difat:			0,
-			difat:				(new Int32Array(109)).fill(SecID.FREE),
-		});
-		return this.load1(await this.load(h, new Sectors(h.sector_shift, 512, backing)));
+	dir_chain:	number[]	= [];
+	mini_chain:	number[]	= [];
+	dir_free 	= -1;
+	pending		= Promise.resolve();
+
+	static async load(backing: Backing): Promise<Reader> {
+		const buffer	= await backing.readAt(0, 512);
+		let h;
+		try {
+			h = new Header(new bin.stream(buffer));
+		} catch (_e) {
+			h = new Header({
+				id:					new Uint8Array(16),
+				revision:			0x003E,
+				version:			3,
+				byteorder:			0xFFFE,
+				sector_shift:		9,
+				mini_shift:			6,
+				num_directory:		0,
+				num_fat:			0,
+				first_directory:	SecID.ENDOFCHAIN,
+				mini_cutoff:		4096,
+				first_mini:			SecID.ENDOFCHAIN,
+				num_mini:			0,
+				first_difat:		SecID.ENDOFCHAIN,
+				num_difat:			0,
+				difat:				(new Int32Array(109)).fill(SecID.FREE),
+			});
+		}
+		const me = new this(h, backing);
+		await me.load();
+		return me;
 	}
 
-	static async loadBuffer(buffer: Buffer) {
-		const h		= new Header(new bin.stream(buffer));
-		return this.load1(await this.load(h, new Sectors(
-			h.sector_shift, 512, {
-				readAt:		async (offset, data) => { const sub = buffer.subarray(offset, offset + data.length); data.set(sub); return sub.length; },
-				writeAt:	async (offset, data) => { buffer.set(data, offset); }
-			}
-		)));
-	}
+	async load() {
+		await super.load();
+		this.dir_chain	= this.fat.get_chain(this.header.first_directory);
+		const dir_buff	= await this.fat.read_chain_alloc(this.dir_chain);
+		this.entries	= bin.readn(new bin.stream(dir_buff), DirEntry.reader(this), dir_buff.length / 128);
 
-	static async load1(me: Reader) {
-		me.chain	= me.fat.get_chain(me.header.first_directory);
-		const 	dir_buff	= new Uint8Array(me.chain.length << me.header.sector_shift);
-		await me.fat.read_chain(me.chain, dir_buff);
-		const 	r2			= new bin.stream(dir_buff);
-		me.entries = bin.readn(r2, DirEntry.reader(me), dir_buff.length / 128);
-
-		if (me.entries.length > 0) {
+		if (this.entries.length > 0) {
 			// make chain of free entries
-			for (let i = 0; i < me.entries.length; i++) {
-				const entry = me.entries[i];
+			for (let i = 0; i < this.entries.length; i++) {
+				const entry = this.entries[i];
 				if (entry.type === TYPE.Empty) {
-					entry.right = me.free;
-					me.free = i;
+					entry.right = this.dir_free;
+					this.dir_free = i;
 				}
 			}
-
-			const root	= me.entries[0];
-			const data	= new Uint8Array(root.size);
-			await me.fat.read_chain(me.fat.get_chain(root.sec_id), data);
-			me.mini_fat.data = new Sectors(
-				me.header.mini_shift, 0, {
-				readAt: async (offset, dest)	=> { const sub = data.subarray(offset, offset + dest.length); dest.set(sub); return sub.length; },
-				writeAt: async (offset, chunk)	=> { data.set(chunk, offset); }
-			});
-
 		} else {
-			me.entries.push(makeEntry(me, 'Root Entry', TYPE.RootStorage));
-			await me.updateIndex(0);
+			this.entries.push(makeEntry(this, 'Root Entry', TYPE.RootStorage));
+			await this.updateIndex(0);
 		}
-		return me;
+
+		this.mini_chain = this.fat.get_chain(this.entries[0].sec_id);
+		this.mini_fat	= new FAT(
+			bin.utils.as32s(await this.fat.read_chain_alloc(this.fat.get_chain(this.header.first_mini))),
+			this.header.sector_shift - 2, {
+				shift: this.header.mini_shift,
+				sector:			async (id: number) => (await this.fat.chain_part(this.mini_chain, id << this.header.mini_shift))!,
+				dirty_sector:	async (id: number) => (await this.fat.dirty_chain_part(this.mini_chain, id << this.header.mini_shift))!
+			}
+		);
 	}
 
 	get root() {
@@ -624,36 +549,23 @@ export class Reader extends Master {
 
 	async updateIndex(index: number) {
 		return this.pending = this.pending.then(async () => {
-			const dest = await this.fat.dirty_chain_part(this.chain, index * 128);
+			const dest = await this.fat.dirty_chain_part(this.dir_chain, index * 128);
 			DirEntry.reader(this).put(new bin.stream(dest!), this.entries[index]);
 		});
 	}
-	async updateEntry(entry: DirEntry) {
-		const index = this.entries.indexOf(entry);
-		return this.pending = this.pending.then(async () => {
-			const dest = await this.fat.dirty_chain_part(this.chain, index * 128);
-			DirEntry.reader(this).put(new bin.stream(dest!), entry);
-		});
-	}
-	/*async updateAllEntries() {
-		const data = new Uint8Array((this.entries.length) * 128);
-		bin.writen(new bin.stream(data), DirEntry.reader(this), this.entries);
-		this.fat.resize_chain(this.chain, data.length);
-		this.fat.write_chain(this.chain, data);
-	}*/
-	async clearEntry(index: number) {
+	async clearIndex(index: number) {
 		this.entries[index] = makeEntry(this, '', TYPE.Empty);
 		return this.updateIndex(index).then(() => {
-			this.entries[index].right = this.free;
-			this.free = index;
+			this.entries[index].right = this.dir_free;
+			this.dir_free = index;
 		});
 	}
 	addEntry(entry: DirEntry) {
-		let index = this.free;
+		let index = this.dir_free;
 		if (index < 0)
 			index = this.entries.length;
 		else
-			this.free = this.entries[index].right;
+			this.dir_free = this.entries[index].right;
 		this.entries[index] = entry;
 		return index;
 	}
@@ -661,22 +573,19 @@ export class Reader extends Master {
 	rbFind(root: number, name: string) {
 		let parent	= -1;
 		let cur		= root;
-		while (cur !== -1 && name !== this.entries[cur].name) {
+		for (let cmp; cur !== -1 && (cmp = cmpName(name, this.entries[cur].name)); cur = cmp < 0 ? this.entries[cur].left : this.entries[cur].right)
 			parent	= cur;
-			cur		= name < this.entries[cur].name ? this.entries[cur].left : this.entries[cur].right;
-		}
 		return [cur, parent] as const;
 	}
 
-	rbInsert(root: DirEntry, entry: DirEntry) {
-		const index = this.addEntry(entry);
-
+	rbInsert(root: number, index: number) {
+		const name = this.entries[index].name;
 		const recurse = (idx: number): number => {
 			if (idx === -1)
 				return index;
 
 			const n = this.entries[idx];
-			if (entry.name < n.name)
+			if (cmpName(name, n.name) < 0)
 				n.left = recurse(n.left);
 			else
 				n.right = recurse(n.right);
@@ -710,11 +619,7 @@ export class Reader extends Master {
 
 			return idx;
 		};
-
-		entry.colour	= RED;
-		root.root		= recurse(root.root);
-		//root.colour		= BLACK;
-		return index;
+		return recurse(root);
 	}
 
 	rbRemove(root: DirEntry, entry: DirEntry) {
@@ -734,14 +639,14 @@ export class Reader extends Master {
 					this.entries[parent].right = -1;
 				this.updateIndex(parent);
 			}
-			this.clearEntry(idx);
+			this.clearIndex(idx);
 
 		// single child: move child into target slot and clear child
 		} else if (entry.left < 0 || entry.right < 0) {
 			const src = entry.left < 0 ? entry.right : entry.left;
 			this.entries[idx] = this.entries[src];
 			this.updateIndex(idx);
-			this.clearEntry(src);
+			this.clearIndex(src);
 
 		} else {
 			// two children: find successor (leftmost of right subtree)
@@ -764,7 +669,7 @@ export class Reader extends Master {
 			this.updateIndex(cur);
 			
 			// clear successor slot
-			this.clearEntry(succ);
+			this.clearIndex(succ);
 		}
 	}
 
@@ -786,19 +691,26 @@ export class Reader extends Master {
 		return !entry && create ? dir.addEntry(name, TYPE.UserStream) : entry;
 	}
 
+	private use_mini(size: number) {
+		return size < this.header.mini_cutoff;
+	}
+	private get_fat(mini: boolean) {
+		return mini ? this.mini_fat : this.fat;
+	}
+
 	async read(entry: DirEntry) {
-		const mini	= this.header.use_mini(entry.size);
+		const mini	= this.use_mini(entry.size);
 		const fat	= this.get_fat(mini);
 		const data	= new Uint8Array(entry.size);
 		return this.pending.then(() => fat.read_chain(fat.get_chain(entry.sec_id), data)).then(() => data);
 	}
 
 	async write(entry: DirEntry, data: Uint8Array) {
-		const mini1	= this.header.use_mini(entry.size);
+		const mini1	= this.use_mini(entry.size);
 		const fat1	= this.get_fat(mini1);
 		const chain = fat1.get_chain(entry.sec_id);
 
-		const mini2	= this.header.use_mini(data.length);
+		const mini2	= this.use_mini(data.length);
 		const fat2	= this.get_fat(mini2);
 
 		if (mini1 != mini2)
@@ -807,36 +719,45 @@ export class Reader extends Master {
 
 		entry.size		= data.length;
 		entry.sec_id	= chain[0];
-		this.updateEntry(entry);
+
+		this.updateIndex(this.entries.indexOf(entry));
 
 		return this.pending = this.pending.then(() => fat2.write_chain(chain, data));
 	}
 
 	async flush() {
-		// update directory chain in header if needed
 		let dirty_header = false;
-		if (this.header.first_directory != this.chain[0] || this.header.num_directory != this.chain.length) {
-			this.header.first_directory = this.chain[0];
-			this.header.num_directory = this.chain.length;
+
+		// update directory chain
+		if (this.header.first_directory != this.dir_chain[0] || this.header.num_directory != this.dir_chain.length) {
+			this.header.first_directory = this.dir_chain[0];
+			this.header.num_directory	= this.dir_chain.length;
 			dirty_header = true;
 		}
 
 		// update mini data chain
-		const root = this.entries[0];
-		const mini_extra = this.header.sector_shift - this.header.mini_shift;
-		const chain = this.fat.get_chain(root.sec_id);
-		for (const i of this.mini_fat.data.dirty) {
-			const srce = await this.mini_fat.sector(i);
-			const dest = await this.fat.dirty_chain_part(chain, i >> mini_extra);
-			dest!.set(srce!);
-		}
-		this.mini_fat.data.dirty.clear();
-		if (root.size != this.mini_fat.data.size() || root.sec_id != chain[0]) {
-			root.sec_id	= chain[0];
-			root.size	= this.mini_fat.data.size();
+		const root		= this.entries[0];
+		const mini_size = this.mini_chain.length << this.mini_fat.sectors.shift;
+		if (root.size != mini_size || root.sec_id != this.mini_chain[0]) {
+			root.sec_id	= this.mini_chain[0];
+			root.size	= mini_size;
 			this.updateIndex(0);
 		}
 		await this.pending;
+
+		// update mini fat
+		const shift			= this.header.sector_shift;
+		const num_mini		= shiftCeil(this.mini_fat.fat.length, shift - 2);
+		const mini_chain	= this.fat.get_chain(this.header.first_mini);
+		if (num_mini > this.header.num_mini) {
+			this.fat.resize_chain(mini_chain, num_mini << shift);
+			this.header.first_mini	= mini_chain[0];
+			this.header.num_mini	= num_mini;
+			dirty_header			= true;
+		}
+
+		await this.mini_fat.flush(this.fat, mini_chain);
+
 		return super.flush(dirty_header);
 	}
 }

@@ -40,8 +40,8 @@ const CLR_HEADER = {
 const STREAM_HDR = {
 	Offset:		bin.UINT32_LE,		// Memory offset to start of this stream from start of the metadata root (§II.24.2.1)
 	Size:		bin.UINT32_LE,		// Size of this stream in bytes, shall be a multiple of 4.
-	Name:		bin.NullTerminatedStringType(),	// Name of the stream as null-terminated variable length array of ASCII characters, padded to the next 4-byte boundary with \0 characters. The name is limited to 32 characters.
-	unused:		bin.AlignType(4),
+	Name:		bin.NullTerminatedString(),	// Name of the stream as null-terminated variable length array of ASCII characters, padded to the next 4-byte boundary with \0 characters. The name is limited to 32 characters.
+	unused:		bin.Aligned(4, bin.Const(undefined)),
 };
 
 const METADATA_ROOT = {
@@ -49,9 +49,9 @@ const METADATA_ROOT = {
 	MajorVersion: 	bin.UINT16_LE,
 	MinorVersion: 	bin.UINT16_LE,
 	Reserved:     	bin.UINT32_LE,	// always 0
-	Version:      	bin.StringType(bin.UINT32_LE, 'utf8', true),
+	Version:      	bin.String(bin.UINT32_LE, 'utf8', true),
 	unknown: 		bin.UINT16_LE,
-	Streams:		bin.ArrayType(bin.UINT16_LE, STREAM_HDR)
+	Streams:		bin.Array(bin.UINT16_LE, STREAM_HDR)
 };
 
 const CLR_TABLES = {
@@ -64,55 +64,57 @@ const CLR_TABLES = {
 	Sorted: 	 	bin.UINT64_LE,	// Bit vector of sorted tables.
 };
 
-enum TABLE {
-	Module						= 0x00,
-	TypeRef						= 0x01,
-	TypeDef						= 0x02,
-	// Unused					= 0x03,
-	Field						= 0x04,
-	// Unused					= 0x05,
-	MethodDef					= 0x06,
-	// Unused					= 0x07,
-	Param						= 0x08,
-	InterfaceImpl				= 0x09,
-	MemberRef					= 0x0a,
-	Constant					= 0x0b,
-	CustomAttribute				= 0x0c,
-	FieldMarshal				= 0x0d,
-	DeclSecurity				= 0x0e,
-	ClassLayout					= 0x0f,
+const TABLE = {
+	Module:						0x00,
+	TypeRef:					0x01,
+	TypeDef:					0x02,
+	// Unused:					0x03,
+	Field:						0x04,
+	// Unused:					0x05,
+	MethodDef:					0x06,
+	// Unused:					0x07,
+	Param:						0x08,
+	InterfaceImpl:				0x09,
+	MemberRef:					0x0a,
+	Constant:					0x0b,
+	CustomAttribute:			0x0c,
+	FieldMarshal:				0x0d,
+	DeclSecurity:				0x0e,
+	ClassLayout:				0x0f,
 
-	FieldLayout					= 0x10,
-	StandAloneSig				= 0x11,
-	EventMap					= 0x12,
-	// Unused					= 0x13,
-	Event						= 0x14,
-	PropertyMap					= 0x15,
-	// Unused					= 0x16,
-	Property					= 0x17,
-	MethodSemantics				= 0x18,
-	MethodImpl					= 0x19,
-	ModuleRef					= 0x1a,
-	TypeSpec					= 0x1b,
-	ImplMap						= 0x1c,
-	FieldRVA					= 0x1d,
-	// Unused					= 0x1e,
-	// Unused					= 0x1f,
+	FieldLayout:				0x10,
+	StandAloneSig:				0x11,
+	EventMap:					0x12,
+	// Unused:					0x13,
+	Event:						0x14,
+	PropertyMap:				0x15,
+	// Unused:					0x16,
+	Property:					0x17,
+	MethodSemantics:			0x18,
+	MethodImpl:					0x19,
+	ModuleRef:					0x1a,
+	TypeSpec:					0x1b,
+	ImplMap:					0x1c,
+	FieldRVA:					0x1d,
+	// Unused:					0x1e,
+	// Unused:					0x1f,
 
-	Assembly					= 0x20,
-	AssemblyProcessor			= 0x21,
-	AssemblyOS					= 0x22,
-	AssemblyRef					= 0x23,
-	AssemblyRefProcessor		= 0x24,
-	AssemblyRefOS				= 0x25,
-	File						= 0x26,
-	ExportedType				= 0x27,
-	ManifestResource			= 0x28,
-	NestedClass					= 0x29,
-	GenericParam				= 0x2a,
-	MethodSpec					= 0x2b,
-	GenericParamConstraint		= 0x2c,
-}
+	Assembly:					0x20,
+	AssemblyProcessor:			0x21,
+	AssemblyOS:					0x22,
+	AssemblyRef:				0x23,
+	AssemblyRefProcessor:		0x24,
+	AssemblyRefOS:				0x25,
+	File:						0x26,
+	ExportedType:				0x27,
+	ManifestResource:			0x28,
+	NestedClass:				0x29,
+	GenericParam:				0x2a,
+	MethodSpec:					0x2b,
+	GenericParamConstraint:		0x2c,
+} as const;
+
+type TABLE = typeof TABLE[keyof typeof TABLE];
 
 function bytesToGuid(bytes: Uint8Array) {
     // Convert each byte to a two-digit hexadecimal string
@@ -159,7 +161,7 @@ class clr_stream extends bin.stream {
 		return this.getHeap(HEAP.Blob);
 	}
 }
-class clr_dummy extends bin.dummy {
+class clr_dummy extends bin.dummyStream {
 	constructor(public heap_sizes: number, public table_counts: number[]) {
 		super();
 	}
@@ -443,15 +445,15 @@ const ResourceManagerHeader = {
 };
 
 const ResourceManager = {
-	reader: 		bin.StringType(bin.UINT8),// Class name of IResourceReader to parse this file
-	set:			bin.StringType(bin.UINT8),// Class name of ResourceSet to parse this file
+	reader: 		bin.String(bin.UINT8),// Class name of IResourceReader to parse this file
+	set:			bin.String(bin.UINT8),// Class name of ResourceSet to parse this file
 	version:		bin.UINT32_LE,
 	num_resources:	bin.UINT32_LE,
-	types: 			bin.ArrayType(bin.UINT32_LE, bin.StringType(bin.UINT8)),
+	types: 			bin.Array(bin.UINT32_LE, bin.String(bin.UINT8)),
 };
 
 const ResourceEntry = {
-	name:			bin.StringType(bin.UINT8, 'utf16le', false, 1),
+	name:			bin.String(bin.UINT8, 'utf16le', false, 1),
 	offset:			bin.UINT32_LE,
 };
 
@@ -497,7 +499,7 @@ export class CLR {
 				table_counts[i] = bin.UINT32_LE.get(stream);
 			}
 
-			this.raw 		= bin.remainder(stream);
+			this.raw 		= stream.remainder();
 			const stream1 	= new clr_dummy(this.table_info.HeapSizes, table_counts);
 			let offset 		= 0;
 
@@ -525,7 +527,7 @@ export class CLR {
 	}
 
 	getTable<T extends TABLE>(t: T): bin.ReadType<typeof TableReaders[T]>[];
-	getTable(t: TABLE): any;
+	//getTable(t: TABLE): any;
 	getTable(t: TABLE) {
 		const table = this.tables[t];
 		if (table) {
@@ -544,7 +546,7 @@ export class CLR {
 				if (i.name == block) {
 					const data0 	= new bin.stream(this.Resources.subarray(i.data));
 					const size 		= bin.UINT32_LE.get(data0);
-					return getResources(bin.read_buffer(data0,size));
+					return getResources(data0.view(Uint8Array, size));
 				}
 			}
 		}
@@ -560,7 +562,7 @@ export class CLR {
 			for (const i of this.getTable(TABLE.ManifestResource)!) {
 				const data0 	= new bin.stream(this.Resources.subarray(i.data));
 				const size 		= bin.UINT32_LE.get(data0);
-				const resources = getResources(bin.read_buffer(data0, size));
+				const resources = getResources(data0.view(Uint8Array, size));
 				if (resources)
 					Object.assign(result, resources);
 			}
@@ -574,7 +576,7 @@ function getResources(data: Uint8Array) {
 	const manager0 	= bin.read(stream, ResourceManagerHeader);
 	if (manager0.magic == 0xBEEFCACE) {
 		const manager	= bin.read_more(stream, ResourceManager, manager0);
-		bin.AlignType(8).get(stream);
+		stream.align(8);
 		const _hashes 	= bin.readn(stream, bin.UINT32_LE, manager.num_resources);
 		const _offsets	= bin.readn(stream, bin.UINT32_LE, manager.num_resources);
 		const start		= bin.UINT32_LE.get(stream);
@@ -611,6 +613,6 @@ export function ReadCLR(pe: pe.PE, data: MappedMemory) {
 		return table;
 	}
 	const clr = new CLR(pe, data.data);
-	return Object.fromEntries(Object.entries(clr.tables).map(([k, _]) => [TABLE[+k], fix_names(clr.getTable(+k)!)]));
+	return Object.fromEntries(Object.entries(clr.tables).map(([k, _]) => [Object.keys(TABLE)[+k], fix_names(clr.getTable(+k as TABLE)!)]));
 }
 

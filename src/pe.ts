@@ -43,7 +43,7 @@ const MACHINES: Record<string, number> = {
 };
 const MACHINE = bin.asEnum(uint16, MACHINES);
 
-const FILE_HEADER = {
+const COFF_HEADER = {
 	Machine:				MACHINE,
 	NumberOfSections:		uint16,
 	TimeDateStamp:			uint32,
@@ -98,8 +98,8 @@ const SECTION_CHARACTERISTICS = {
 	MEM_WRITE:				0x80000000,
 } as const;
 
-export class Section extends bin.ReadClass({
-	Name:					bin.StringType(8),
+export class Section extends bin.Class({
+	Name:					bin.String(8),
 	VirtualSize:			uint32,
 	VirtualAddress:			bin.asHex(uint32),
 	SizeOfRawData:			uint32,
@@ -114,39 +114,31 @@ export class Section extends bin.ReadClass({
 	constructor(r: bin.stream) {
 		super(r);
 		try {
-			this.data = new MappedMemory(bin.buffer_at(r, +this.PointerToRawData, this.SizeOfRawData), BigInt(this.VirtualAddress.value), this.flags);
+			this.data = new MappedMemory(r.view_at(Uint8Array, +this.PointerToRawData - r.masterOffset, this.SizeOfRawData), BigInt(this.VirtualAddress.value), this.flags);
 		} catch (e) {
 			console.log(e);
 		}
 	}
 	get flags() {
 		return MappedMemory.RELATIVE
-			| (this.Characteristics.MEM_READ	? MappedMemory.READ 		: 0)
+			| (this.Characteristics.MEM_READ	? MappedMemory.READ 	: 0)
 			| (this.Characteristics.MEM_WRITE	? MappedMemory.WRITE 	: 0)
 			| (this.Characteristics.MEM_EXECUTE	? MappedMemory.EXECUTE	: 0);
 	}
 }
 
-export class COFF {
+export class COFF extends bin.Class({
+	...COFF_HEADER,
+	opt: bin.Buffer('SizeOfOptionalHeader'),
+	sections: bin.Array('NumberOfSections', Section),
+}) {
 	static check(data: Uint8Array): boolean {
-		const header = bin.read(new bin.stream(data), FILE_HEADER);
+		const header = bin.read(new bin.stream(data), COFF_HEADER);
 		return MACHINES[header.Machine] !== undefined;
 	}
 
-	header:		bin.ReadType<typeof FILE_HEADER>;
-	opt?:		bin.ReadType<typeof OPTIONAL_HEADER> & (bin.ReadType<typeof OPTIONAL_HEADER32> | bin.ReadType<typeof OPTIONAL_HEADER64>);
-	sections:	Section[];
-
 	constructor(data: Uint8Array) {
-		const file	= new bin.stream(data);
-		this.header = bin.read(file, FILE_HEADER);
-
-		if (this.header.SizeOfOptionalHeader) {
-			console.log("COFF: SizeOfOptionalHeader", this.header.SizeOfOptionalHeader);
-
-		}
-
-		this.sections = Array.from({length: this.header.NumberOfSections}, () => new Section(file));
+		super(new bin.stream(data));
 	}
 }
 
@@ -165,8 +157,8 @@ const SYMBOL = {
 		Value: uint16,
 	//}
 	Type: uint16,
-	Symbol: bin.NullTerminatedStringType(),
-	Module: bin.NullTerminatedStringType(),
+	Symbol: bin.NullTerminatedString(),
+	Module: bin.NullTerminatedString(),
 };
 
 export class COFFSymbol extends bin.ReadClass(SYMBOL) {
@@ -206,31 +198,6 @@ const RVA_ARRAY16 = {
 const RVA_ARRAY32 = {
 	get(s: pe_stream)	{ return bin.utils.as32(s.get_rva()); },
 	put(_s: pe_stream)	{}
-};
-
-const DOS_HEADER = {
-	magic:		uint16,
-	cblp:		uint16,
-	cp:			uint16,
-	crlc:		uint16,
-	cparhdr:	uint16,
-	minalloc:	uint16,
-	maxalloc:	bin.asHex(uint16),
-	ss:			uint16,
-	sp:			uint16,
-	csum:		uint16,
-	ip:			uint16,
-	cs:			uint16,
-	lfarlc:		uint16,
-	ovno:		uint16,
-};
-
-const EXE_HEADER = {
-	res:		bin.ArrayType(4, uint16),
-	oemid:		uint16,
-	oeminfo:	uint16,
-	res2:		bin.ArrayType(10, uint16),
-	lfanew:		bin.INT32_LE,
 };
 
 interface DirectoryInfo<T> {
@@ -298,91 +265,97 @@ const OPTIONAL_HEADER = {
 	SizeOfUninitializedData:	uint32,
 	AddressOfEntryPoint:		bin.asHex(uint32),
 	BaseOfCode:					bin.asHex(uint32),
+	_: bin.Switch('Magic', {
+		'NT32': {
+			BaseOfData: 				bin.asHex(uint32),
+			ImageBase:  				bin.asHex(uint32),
+			SectionAlignment:   		uint32,
+			FileAlignment:  			uint32,
+			MajorOperatingSystemVersion:uint16,
+			MinorOperatingSystemVersion:uint16,
+			MajorImageVersion:  		uint16,
+			MinorImageVersion:  		uint16,
+			MajorSubsystemVersion:  	uint16,
+			MinorSubsystemVersion:  	uint16,
+			Win32VersionValue:  		uint32,
+			SizeOfImage:				uint32,
+			SizeOfHeaders:  			uint32,
+			CheckSum:   				uint32,
+			Subsystem:  				uint16,
+			DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
+			SizeOfStackReserve: 		uint32,
+			SizeOfStackCommit:  		uint32,
+			SizeOfHeapReserve:  		uint32,
+			SizeOfHeapCommit:   		uint32,
+			LoaderFlags:				uint32,
+			DataDirectory:  			bin.objectWithNames(bin.Array(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
+		},
+		'NT64': {
+			ImageBase:  				bin.asHex(uint64),
+			SectionAlignment:   		uint32,
+			FileAlignment:  			uint32,
+			MajorOperatingSystemVersion:uint16,
+			MinorOperatingSystemVersion:uint16,
+			MajorImageVersion:  		uint16,
+			MinorImageVersion:  		uint16,
+			MajorSubsystemVersion:  	uint16,
+			MinorSubsystemVersion:  	uint16,
+			Win32VersionValue:  		uint32,
+			SizeOfImage:				uint32,
+			SizeOfHeaders:  			uint32,
+			CheckSum:   				uint32,
+			Subsystem:  				uint16,
+			DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
+			SizeOfStackReserve: 		uint64,
+			SizeOfStackCommit:  		uint64,
+			SizeOfHeapReserve:  		uint64,
+			SizeOfHeapCommit:   		uint64,
+			LoaderFlags:				uint32,
+			DataDirectory:  			bin.objectWithNames(bin.Array(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
+		},
+	})
 };
 
-const OPTIONAL_HEADER32 = {
-	BaseOfData: 				bin.asHex(uint32),
-	ImageBase:  				bin.asHex(uint32),
-	SectionAlignment:   		uint32,
-	FileAlignment:  			uint32,
-	MajorOperatingSystemVersion:uint16,
-	MinorOperatingSystemVersion:uint16,
-	MajorImageVersion:  		uint16,
-	MinorImageVersion:  		uint16,
-	MajorSubsystemVersion:  	uint16,
-	MinorSubsystemVersion:  	uint16,
-	Win32VersionValue:  		uint32,
-	SizeOfImage:				uint32,
-	SizeOfHeaders:  			uint32,
-	CheckSum:   				uint32,
-	Subsystem:  				uint16,
-	DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
-	SizeOfStackReserve: 		uint32,
-	SizeOfStackCommit:  		uint32,
-	SizeOfHeapReserve:  		uint32,
-	SizeOfHeapCommit:   		uint32,
-	LoaderFlags:				uint32,
-	DataDirectory:  			bin.objectWithNames(bin.ArrayType(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
-};
-
-const OPTIONAL_HEADER64 = {
-	ImageBase:  				bin.asHex(uint64),
-	SectionAlignment:   		uint32,
-	FileAlignment:  			uint32,
-	MajorOperatingSystemVersion:uint16,
-	MinorOperatingSystemVersion:uint16,
-	MajorImageVersion:  		uint16,
-	MinorImageVersion:  		uint16,
-	MajorSubsystemVersion:  	uint16,
-	MinorSubsystemVersion:  	uint16,
-	Win32VersionValue:  		uint32,
-	SizeOfImage:				uint32,
-	SizeOfHeaders:  			uint32,
-	CheckSum:   				uint32,
-	Subsystem:  				uint16,
-	DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
-	SizeOfStackReserve: 		uint64,
-	SizeOfStackCommit:  		uint64,
-	SizeOfHeapReserve:  		uint64,
-	SizeOfHeapCommit:   		uint64,
-	LoaderFlags:				uint32,
-	DataDirectory:  			bin.objectWithNames(bin.ArrayType(uint32, DATA_DIRECTORY), bin.names(Object.keys(DIRECTORIES))),
-};
-
-export class PE {
+export class PE extends bin.Class({
+	DOS_HEADER: {
+		magic:		uint16,
+		cblp:		uint16,
+		cp:			uint16,
+		crlc:		uint16,
+		cparhdr:	uint16,
+		minalloc:	uint16,
+		maxalloc:	bin.asHex(uint16),
+		ss:			uint16,
+		sp:			uint16,
+		csum:		uint16,
+		ip:			uint16,
+		cs:			uint16,
+		lfarlc:		uint16,
+		ovno:		uint16,
+	},
+	EXE_HEADER: {//bin.Optional(s => s.obj.DOS_HEADER.magic === bin.utils.stringCode("MZ"), {
+		res:		bin.Array(4, uint16),
+		oemid:		uint16,
+		oeminfo:	uint16,
+		res2:		bin.Array(10, uint16),
+	},
+	PE: bin.Offset(bin.INT32_LE, {
+		sig:		bin.Expect(uint32, bin.utils.stringCode("PE\0\0")),
+		...COFF_HEADER,
+		opt:		bin.Optional('SizeOfOptionalHeader', bin.Size('SizeOfOptionalHeader', OPTIONAL_HEADER)),
+		sections:	bin.Array('NumberOfSections', Section),
+	})
+}) {
 	static check(data: Uint8Array): boolean {
 		return uint16.get(new bin.stream(data)) === bin.utils.stringCode("MZ");
 	}
 
-	header:		bin.ReadType<typeof DOS_HEADER> & bin.ReadType<typeof EXE_HEADER>;
-	opt?:		bin.ReadType<typeof OPTIONAL_HEADER> & (bin.ReadType<typeof OPTIONAL_HEADER32> | bin.ReadType<typeof OPTIONAL_HEADER64>);
-	sections:	Section[];
-
 	constructor(data: Uint8Array) {
-		const file	= new bin.stream(data);
-		this.header	= bin.read(file, {...DOS_HEADER, ...EXE_HEADER});
-
-		file.seek(this.header.lfanew);
-		if (uint32.get(file) == bin.utils.stringCode("PE\0\0")) {
-			const h = bin.read(file, FILE_HEADER);
-
-			if (h.SizeOfOptionalHeader) {
-				const opt	= new bin.stream(bin.read_buffer(file, h.SizeOfOptionalHeader));
-				const opt1	= bin.read(opt, OPTIONAL_HEADER);
-				if (opt1.Magic == 'NT32')
-					this.opt = bin.read_more(opt, OPTIONAL_HEADER32, opt1);
-				else if (opt1.Magic == 'NT64')
-					this.opt = bin.read_more(opt, OPTIONAL_HEADER64, opt1);
-			}
-
-			this.sections = Array.from({length: h.NumberOfSections}, () => new Section(file));
-		} else {
-			this.sections = [];
-		}
+		super(new bin.stream(data));
 	}
 
 	get directories() {
-		return this.opt?.DataDirectory;
+		return this.PE.opt?.DataDirectory;
 	}
 
 	get directories2() {
@@ -391,14 +364,14 @@ export class PE {
 			return Object.fromEntries(Object.keys(dirs).map(dir => [dir, this.ReadDirectory(dir as DirectoryName)]));
 	}
 	FindSectionRVA(rva: number) {
-		for (const i of this.sections) {
+		for (const i of this.PE.sections) {
 			if (rva >= +i.VirtualAddress && rva < +i.VirtualAddress + i.SizeOfRawData)
 				return i;
 		}
 	}
 
 	FindSectionRaw(addr: number) {
-		for (const i of this.sections) {
+		for (const i of this.PE.sections) {
 			if (addr >= +i.PointerToRawData && addr < +i.PointerToRawData + i.SizeOfRawData)
 				return i;
 		}
@@ -422,7 +395,7 @@ export class PE {
 	}
 
 	ReadDirectory<T extends DirectoryName>(name: T) : DirectoryReadResult<T> {
-		const dir	= this.opt?.DataDirectory[name];
+		const dir	= this.PE.opt?.DataDirectory[name];
 		if (dir?.Size) {
 			const data 	= this.GetDataDir(dir);
 			const info	= DIRECTORIES[name];
@@ -550,7 +523,7 @@ const RESOURCE_DIRECTORY = {
 	MinorVersion:			uint16,
 	NumberOfNamedEntries:	uint16,
 	NumberOfIdEntries:		uint16,
-	entries:				bin.ArrayType(s => s.obj.NumberOfNamedEntries + s.obj.NumberOfIdEntries, {
+	entries:				bin.Array(s => s.obj.NumberOfNamedEntries + s.obj.NumberOfIdEntries, {
 		u0: uint32,
 		u1: uint32,
 	})
@@ -584,7 +557,7 @@ const IRT = {
 
 export function ReadResourceDirectory(file: pe_stream, type = 0) {
 	const dir 		= bin.read(file, RESOURCE_DIRECTORY);
-	const id_type	= bin.StringType(uint16, 'utf16le');
+	const id_type	= bin.String(uint16, 'utf16le');
 	const topbit	= 0x80000000;
 	const result : Record<string, any> = {};
 

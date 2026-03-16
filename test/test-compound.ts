@@ -1,4 +1,6 @@
-import { Directory, Reader, Backing, TYPE } from '../dist/CompoundDocument';
+import { Directory, Reader, DirEntry, Backing, TYPE } from '../dist/CompoundDocument';
+import * as ole from '../dist/ole';
+import * as bin from '@isopodlabs/binary';
 import { promises as fs } from 'fs';
 import https from 'https';
 
@@ -22,6 +24,8 @@ async function listGithubFiles(apiUrl: string): Promise<{name: string, download_
 					 res.on('end', async () => {
 						 try {
 							 const files = JSON.parse(data);
+							 if (!Array.isArray(files))
+								 return reject(new Error('Unexpected API response: ' + data));
 							 const subs = await Promise.all(files.filter((f: any) => f.type === 'dir').map((dir: any) => listGithubFiles(dir.url)));
 							 resolve([...subs.flat(), ...files.filter((f: any) => f.type === 'file')]);
 						 } catch (e) {
@@ -46,16 +50,42 @@ function downloadFile(url: string) {
 	);
 }
 
+function print(x: any, depth = 0) : string {
+	if (x === undefined)
+		return 'undefined';
+
+	if (typeof x === 'object') {
+		if (Array.isArray(x))
+			return x.map(i => print(i, depth + 1)).join(', ');
+
+		if (x.toString !== Object.prototype.toString)
+			return x.toString();
+
+		return Object.entries(x).map(([k, v]) => v !== undefined && `${' '.repeat(depth * 2)}${k}: ${print(v, depth + 1)}`).filter(Boolean).join('\n');
+	}
+	return x.toString();
+}
+
+async function summary(x?: DirEntry) {
+	if (x?.is_data()) {
+		const data = await x.read();
+		const summary = bin.read(new bin.stream(data), ole.PropertySetStream);
+		const text = print(summary);
+		console.log(text);
+	}
+}
+
 class FileBacking implements Backing {
 	private fd;
 
 	constructor(filename: string) {
 		this.fd = fs.open(filename, fs.constants.O_RDWR | fs.constants.O_CREAT);
 	}
-	async readAt(offset: number, data: Uint8Array) : Promise<number> {
+	async readAt(offset: number, size: number) {
+		const data = new Uint8Array(size);
 		const fd = await this.fd;
-		const read = await fd.read(data, 0, data.length, offset);
-		return read.bytesRead;
+		const _read = await fd.read(data, 0, size, offset);
+		return data;
 	}
 	async writeAt(offset: number, data: Uint8Array) {
 		const fd = await this.fd;
@@ -68,10 +98,28 @@ class FileBacking implements Backing {
 	}
 }
 
+function BufferBacking(buffer: Uint8Array): Backing {
+	return {
+		readAt:		async (offset, size) => { return offset + size <= buffer.length ? buffer.subarray(offset, offset + size) : new Uint8Array(size); },
+		writeAt:	async (offset, data) => { buffer.set(data, offset); }
+	};
+}
 
 (async () => {
+	const reader0 = await Reader.load(new FileBacking('D:\\dev\\shared\\.vs\\shared\\v17\\.suo'));
+	dumpDirectory(reader0.root, 0);
+	const configStream0 = reader0.find("SolutionConfiguration");
+	if (configStream0?.is_data()) {
+		const data = await configStream0.read();
+		console.log('Read data:', data);
+	}
+	const sourceStream0 = reader0.find("DebuggerFindSource");
+	if (sourceStream0?.is_data()) {
+		const data = await sourceStream0.read();
+		console.log('Read data:', data);
+	}
 
-	const reader = await Reader.loadBacking(new FileBacking('test-compound.doc'));
+	const reader = await Reader.load(new FileBacking('test-compound.doc'));
 	let configStream = reader.find("SolutionConfiguration");
 	if (!configStream) {
 		await reader.root.addStream("SolutionConfiguration", new Uint8Array([1, 2, 3, 4]));
@@ -88,7 +136,7 @@ class FileBacking implements Backing {
 	console.log('File written successfully');
 
 //	const reader1 = await fs.readFile('test-compound.doc').then(bytes => Reader.loadBuffer(bytes));
-	const reader1 = await Reader.loadBuffer(await fs.readFile('test-compound.doc'));
+	const reader1 = await Reader.load(BufferBacking(await fs.readFile('test-compound.doc')));
 	if (reader1) {
 		const configStream1 = reader1.find("SolutionConfiguration");
 		if (configStream1?.is_data()) {
@@ -103,10 +151,14 @@ class FileBacking implements Backing {
 		const url = file.download_url;
 		try {
 			const data = await downloadFile(url);
-			const reader = await Reader.loadBuffer(data);
+			const reader = await Reader.load(BufferBacking(data));
 			if (reader) {
 				console.log(`\n=== Directory tree for ${file.name} ===`);
 				dumpDirectory(reader.root, 0);
+
+				await summary(reader.find("\x05SummaryInformation"));
+				await summary(reader.find("\x05DocumentSummaryInformation"));
+
 			} else {
 				console.log(`\nCould not parse ${file.name} as a compound document.`);
 			}

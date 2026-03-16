@@ -233,12 +233,12 @@ const fat_arch = {
 	offset:		bin.UINT32_BE,		// file offset to this object file
 	size:		bin.UINT32_BE,		// size of this object file
 	align:		bin.UINT32_BE,		// alignment as a power of 2
-	contents:	bin.DontRead<MachFile>(),
+	contents:	bin.Const<MachFile|undefined>(undefined),
 };
 
 const fat_header = {
 	magic:		uint32,		// FAT_MAGIC
-	archs:		bin.ArrayType(uint32, fat_arch)
+	archs:		bin.Array(uint32, fat_arch)
 };
 
 const REQ_DYLD = 0x80000000;
@@ -301,7 +301,7 @@ export enum CMD {
 const str = {
 	get(s: bin.stream) {
 		const off = uint32.get(s);	// offset to the string
-		return bin.utils.decodeTextTo0(bin.buffer_at(s, off - 8), 'utf8');
+		return bin.utils.decodeTextTo0(s.view_at(Uint8Array, off - 8), 'utf8');
 	}
 };
 
@@ -315,7 +315,7 @@ const blob = {
 		const offset	= uint32.get(s);
 		const size		= uint32.get(s);
 		if (size)
-			return bin.buffer_at(s, offset, size);
+			return s.view_at(Uint8Array, offset, size);
 	}
 };
 
@@ -333,7 +333,7 @@ function blobT<T extends bin.TypeReader>(type: T) {
 }
 
 function blobArray<T extends bin.Type>(type: T) {
-	return blobT(bin.RemainingArrayType(type));
+	return blobT(bin.RemainingArray(type));
 }
 
 
@@ -348,7 +348,7 @@ function count_table<T extends bin.TypeReader>(type: T) {
 	};
 }
 
-const fixed_string16	= bin.StringType(16);
+const fixed_string16	= bin.String(16);
 const version			= bin.asFlags(uint32, {major: 0xffff0000, minor: 0xff00, patch: 0xff}, false);
 
 const command = {
@@ -404,7 +404,6 @@ function section(bits: 32|64) {
 	const type		= bin.asHex(bin.UINT(bits));
 
 	class Section extends bin.Class({
-		//data:		binary.DontRead<binary.utils.MappedMemory>(),
 		sectname: 	fixed_string16,
 		segname: 	fixed_string16,
 		addr:		type,		// memory address of this section
@@ -416,7 +415,7 @@ function section(bits: 32|64) {
 		flags:		bin.as(uint32, SECTION_FLAGS),	// flags (section type and attributes)
 		reserved1:	uint32,		// reserved (for offset or index)
 		reserved2:	uint32,		// reserved (for count or sizeof)
-		_:			bin.AlignType(bits / 8)
+		_:			bin.Aligned(bits / 8, bin.Const(undefined)),
 	}) {
 		data:	Promise<MappedMemory>;
 		constructor(s: mach_stream) {
@@ -441,7 +440,7 @@ const SEGMENT_FLAGS = {
 function segment<T extends 32|64>(bits: T) {
 	const type		= bin.asHex(bin.UINT(bits));
 	const fields	= {
-		data:		bin.DontRead<MappedMemory>(),
+		data:		bin.Const<MappedMemory|undefined>(undefined),
 		segname: 	fixed_string16,	// segment name
 		vmaddr:		type,		// memory address of this segment
 		vmsize:		type,		// memory size of this segment
@@ -451,7 +450,7 @@ function segment<T extends 32|64>(bits: T) {
 		initprot:	uint32,		// initial VM protection
 		nsects:		uint32,		// number of sections in segment
 		flags:		bin.as(uint32, bin.Flags(SEGMENT_FLAGS,true)),			// flags
-		sections:	bin.DontRead<Record<string, any>>(),//binary.ReadType<typeof section(bits)>)),
+		sections:	bin.Const<Record<string, any>>({}),//binary.ReadType<typeof section(bits)>)),
 	};
 	return {
 		get(s: mach_stream) {
@@ -463,7 +462,7 @@ function segment<T extends 32|64>(bits: T) {
 
 				//const sect = section(bits);
 				if (o.nsects) {
-					o.sections = bin.objectWithNames(bin.ArrayType(o.nsects, section(bits)), bin.field('sectname')).get(s);
+					o.sections = bin.objectWithNames(bin.Array(o.nsects, section(bits)), bin.field('sectname')).get(s);
 					//o.sections = Object.fromEntries(Array.from({length: o.nsects}, (_,i)=>new sect(s)).map(s => [s.sectname, s]));
 				}
 			}
@@ -501,7 +500,7 @@ function segment(bits: 32|64) {
 
 			//const sect = section(bits);
 			if (this.nsects) {
-				this.sections = binary.objectWithNames(binary.ArrayType(this.nsects, section(bits)), binary.field('sectname')).get(s);
+				this.sections = binary.objectWithNames(binary.Array(this.nsects, section(bits)), binary.field('sectname')).get(s);
 				//o.sections = Object.fromEntries(Array.from({length: o.nsects}, (_,i)=>new sect(s)).map(s => [s.sectname, s]));
 			}
 
@@ -785,14 +784,14 @@ const dyld_chained_starts_in_segment = {
 	}),
 	segment_offset:	 	xint64,	// VM offset from the __TEXT segment
 	max_valid_pointer:	xint32,	// Values beyond this are not pointers on 32-bit
-	pages:				bin.ArrayType(uint16, bin.asEnum(uint16, {
+	pages:				bin.Array(uint16, bin.asEnum(uint16, {
 		NONE:		0xFFFF,
 		MULTI: 	0x8000,	// page which has multiple starts
 		LAST:		0x8000,	// last chain_start for a given page
 	}))
 };
 
-const dyld_chained_starts_in_image	= bin.ArrayType(uint32, bin.OffsetType(uint32, dyld_chained_starts_in_segment));
+const dyld_chained_starts_in_image	= bin.Array(uint32, bin.Offset(uint32, dyld_chained_starts_in_segment));
 
 const dyld_chained_import = bin.as(uint32, bin.BitFields({
 	lib_ordinal : 8,
@@ -814,12 +813,12 @@ const dyld_chained_import_addend64 = {
 	})),
 	addend:	uint64,
 };
-
+/*
 class dyld_chained_fixups extends bin.ReadClass({
 	fixups_version:	uint32,	// currently 0
-	starts:			bin.OffsetType(uint32, dyld_chained_starts_in_image),
-	imports:		bin.OffsetType(uint32, bin.Remainder),	// offset of imports table in chain_data
-	symbols:		bin.OffsetType(uint32, bin.Remainder),	// offset of symbol strings in chain_data
+	starts:			bin.Offset(uint32, dyld_chained_starts_in_image),
+	imports:		bin.Offset(uint32, bin.Remainder),	// offset of imports table in chain_data
+	symbols:		bin.Offset(uint32, bin.Remainder),	// offset of symbol strings in chain_data
 	imports_count:	uint32,	// number of imported symbol names
 	imports_format:	bin.asEnum(uint32, {
 		IMPORT:				1,
@@ -849,7 +848,7 @@ class dyld_chained_fixups extends bin.ReadClass({
 		}
 	}
 }
-
+*/
 const dyld_chained_ptr_64_bind = bin.as(uint64, bin.BitFields({
 	ordinal		: 24,
 	addend	 	: 8,
@@ -1002,7 +1001,7 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 		platform:		bin.asEnum(uint32, PLATFORM),
 		minos:			version,
 		sdk:			version,
-		tools:			bin.objectWithNames(bin.ArrayType(uint32, {tool: bin.as(uint32, bin.Enum(TOOL)), version}), bin.field('tool')),
+		tools:			bin.objectWithNames(bin.Array(uint32, {tool: bin.as(uint32, bin.Enum(TOOL)), version}), bin.field('tool')),
 	},
 	[CMD.LINKER_OPTION]:			{
 		count:			uint32,	// number of strings following
@@ -1062,7 +1061,7 @@ export class MachFile {
 
 		for (let i = 0; i < h.ncmds; ++i) {
 			const cmd	= bin.read(file, command);
-			const file2	= new mach_stream(data, bin.read_buffer(file, cmd.cmdsize - 8), file.be!, h.filetype === 'EXECUTE' ? 0: MappedMemory.RELATIVE, mem);
+			const file2	= new mach_stream(data, file.view(Uint8Array, cmd.cmdsize - 8), file.be!, h.filetype === 'EXECUTE' ? 0: MappedMemory.RELATIVE, mem);
 			const result = bin.read(file2, cmd_table[cmd.cmd] ?? {});
 			this.commands.push({cmd: cmd.cmd, data: result});
 		}
@@ -1126,7 +1125,7 @@ export class FATMachFile {
 		this.archs = header.archs;
 		for (const arch of header.archs) {
 			const cpu	= CPU_TYPE[arch.cputype as keyof typeof CPU_TYPE];
-			const data	= bin.buffer_at(file, arch.offset, arch. size);
+			const data	= file.view_at(Uint8Array, arch.offset, arch. size);
 			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+arch.cpusubtype);
 			arch.contents	= new MachFile(data, mem);
 		}
