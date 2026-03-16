@@ -20,7 +20,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"postinstall": "ts-patch install && copy-file node_modules/@isopodlabs/binary/scripts/transform.ts scripts/transform.ts",
+		"prepare": "ts-patch install && copy-file node_modules/@isopodlabs/binary/scripts/transform.ts scripts/transform.ts",
 		"build": "tsc",
 		"watch": "tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
@@ -44,7 +44,7 @@
 		"ts-patch": "^3.3.0",
 		"typescript-eslint": "^8.26.0"
 	},
-	"version": "1.5.0",
+	"version": "1.5.1",
 	"dependencies": {
 		"@isopodlabs/binary": "^1.7.2"
 	}
