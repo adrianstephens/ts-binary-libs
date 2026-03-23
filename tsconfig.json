@@ -1,6 +1,6 @@
 {
 	"compilerOptions": {
-		"composite": true,
+		//"composite": true,
 		"target": "ES2022",
 		"module": "commonjs",
 		"strict": true,
@@ -20,10 +20,11 @@
 		]
 	},
 	"include": [
-		"src/**/*.ts"
+		//"src/**/*.ts"
+		"src/arch.ts"
 	],
 	"exclude": [
 		"node_modules",
-		"**/*.spec.ts"
+		"**/*.spec.ts",
 	]
 }

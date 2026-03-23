@@ -11,7 +11,7 @@ const _HEADER = {
 	mode:     	bin.asInt(bin.String(8), 8),
 	size:     	bin.asInt(bin.String(10)),
 	fmag:     	bin.as(bin.String(2),	x => x.trim() == '`' ? '' : x),
-	contents: 	bin.Const<any>(undefined)
+	contents: 	bin.Const<unknown>(undefined)
 };
 
 export type HEADER = bin.ReadType<typeof _HEADER>;

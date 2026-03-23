@@ -3,6 +3,9 @@ import * as zip from '../dist/zip';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
+process.on('unhandledRejection', error => console.error('unhandledRejection', error));
+process.on('uncaughtException', error => console.error('uncaughtException', error));
+
 async function openReadFile(filename: string) {
 	const fd	= await fs.open(filename, fs.constants.O_RDONLY);
 	const stat	= await fs.stat(filename);
@@ -25,16 +28,32 @@ async function openWriteFile(filename: string) {
 }
 
 (async () => {
+	{//async test
+		await using fileIn = await openReadFile(path.join(__dirname, 'test.zip'));
+		const zipFile = new zip.ZIPreaderCD(fileIn);
+		await zipFile.ready;
+		console.log(`got ${zipFile.entries.length}`);
+	}
 	{
-		const fileIn = new bin.stream(await fs.readFile(path.join(__dirname, 'test.zip')));
+		const data = await fs.readFile(path.join(__dirname, 'test.zip'));
+		const fileIn = new bin.stream(data);
 		const zipFile = new zip.ZIPreaderCD(fileIn);
 		console.log(`got ${zipFile.entries.length}`);
 	}
 	{
-		const fileIn = await openReadFile(path.join(__dirname, 'test.zip'));
+		const fileIn = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip'));
 		const zipFile = new zip.ZIPreaderCD(fileIn);
-		await zipFile.ready;
-		console.log(`got ${zipFile.entries.length}`);
+		const zf4 = zipFile.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+		if (zf4) {
+			const data = await zf4.extract(fileIn);
+			console.log(`extracted ${data?.length} bytes`);
+		}
+	}
+	{
+		const fileIn = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip'));
+		const zipFile = new zip.ZIPreader(fileIn);
+		for await(const i of zipFile)
+			console.log(i.filename);
 	}
 	{
 		const file = new bin.stream(await fs.readFile('C:\\ProgramData\\IDrive.zip'));
@@ -55,7 +74,7 @@ async function openWriteFile(filename: string) {
 		}*/
 	}
 	{
-		const file = await openReadFile('C:\\ProgramData\\IDrive.zip');
+		await using file = await openReadFile('C:\\ProgramData\\IDrive.zip');
 		const time = Date.now();
 		const zipFile = new zip.ZIPreaderCD(file);
 		await zipFile.ready;
@@ -65,7 +84,7 @@ async function openWriteFile(filename: string) {
 			console.log(zf.filename);
 			const data = await zf.extract(file);
 			if (data) {
-				console.log(`  compressed: ${zf.compressed_size} bytes`);
+				console.log(`  compressed: ${(await zf.data).length} bytes`);
 				console.log(`  uncompressed: ${data.length} bytes`);
 				zf.check(data);
 			} else {
@@ -73,56 +92,51 @@ async function openWriteFile(filename: string) {
 			}
 		}
 	}
+	{
+		await using fileIn = await openReadFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip');
+		await using fileOut = await openWriteFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
+		using fileOutSync = new bin.growingStream();
 
-	const fileIn		= await openReadFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip');
-	const fileOut		= await openWriteFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
-	const fileOutSync	= new bin.growingStream();
+		const zipIn			= new zip.ZIPreaderCD(fileIn);
+		const zipOut		= new zip.ZIPwriter(fileOut);
+		const zipOutSync	= new zip.ZIPwriter(fileOutSync);
+		await zipIn.ready;
 
-	const zipIn			= new zip.ZIPreaderCD(fileIn);
-	const zipOut		= new zip.ZIPwriter(fileOut);
-	const zipOutSync	= new zip.ZIPwriter(fileOutSync);
-	await zipIn.ready;
+		const zf0 = zipIn.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+		const data0 = await zf0?.extract(fileIn);
 
-	const zf0 = zipIn.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
-	const data0 = await zf0?.extract(fileIn);
+		console.log(`got ${zipIn.entries.length}`);
+		for (const zf of zipIn) {
+			console.log(zf.filename);
+			const data = await zf.extract(fileIn);
+			if (data) {
+				console.log(`  compressed: ${(await zf.data).length} bytes`);
+				console.log(`  uncompressed: ${data.length} bytes`);
+				zf.check(data);
+				const zf2 = await zipOut.write(zf.filename, data, zf.method);
+				const _zf3 = await zipOutSync.write(zf.filename, data, zf.method);
+				console.log(`  recompressed: ${(await zf2?.data)?.length} bytes`);
+			} else {
+				console.log('  no data');
+			}
+		}
+		await zipOut.writeCD();
+		await zipOutSync.writeCD();
 
-	console.log(`got ${zipIn.entries.length}`);
-	for (const zf of zipIn) {
-		console.log(zf.filename);
-		const data = await zf.extract(fileIn);
-		if (data) {
-			console.log(`  compressed: ${zf.compressed_size} bytes`);
-			console.log(`  uncompressed: ${data.length} bytes`);
-			zf.check(data);
-			const zf2 = await zipOut.write(zf.filename, data, zf.method, zf.mtime);
-			const zf3 = await zipOutSync.write(zf.filename, data, zf.method, zf.mtime);
-			console.log(`  recompressed: ${zf2?.compressed_size} bytes`);
-		} else {
-			console.log('  no data');
+		const _dataSync = fileOutSync.terminate();
+
+
+		{
+			await using file3 = await openReadFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
+			const zipFile3	= new zip.ZIPreaderCD(file3);
+			await zipFile3.ready;
+			const zf = zipFile3.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+			if (zf) {
+				const data = await zf.extract(file3);
+				console.log(`extracted ${data?.length} bytes`);
+				if (data0 && data)
+					console.log(`data matches: ${data0.length === data?.length && data0.every((v, i) => v === data[i])}`);
+			}
 		}
 	}
-	await zipOut.writeCD();
-	await zipOutSync.writeCD();
-	await fileOut.terminate();
-
-	const dataSync = fileOutSync.terminate();
-
-	const file4 = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip'));
-	const zipFile4 = new zip.ZIPreaderCD(file4);
-	const zf4 = zipFile4.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
-	if (zf4) {
-		const data = await zf4.extract(file4);
-		console.log(`extracted ${data?.length} bytes`);
-	}
-
-	const file3		= await openReadFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
-	const zipFile3	= new zip.ZIPreaderCD(file3);
-	await zipFile3.ready;
-	const zf = zipFile3.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
-	if (zf) {
-		const data = await zf.extract(file3);
-		console.log(`extracted ${data?.length} bytes`);
-		if (data0 && data)
-			console.log(`data matches: ${data0.length === data?.length && data0.every((v, i) => v === data[i])}`);
-	}
-})();
+})();//.catch(error => console.error('fatal', error));

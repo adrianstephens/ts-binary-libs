@@ -165,7 +165,8 @@ class FAT {
 //	Compound Document Header
 //-----------------------------------------------------------------------------
 
-export class Header extends bin.Class({
+//export class Header extends bin.Class({
+const Header = {
 	magic:				bin.Expect(bin.UINT64_BE, 0xD0CF11E0A1B11AE1n),
 	id:					bin.Buffer(16),
 	revision:			bin.UINT16_LE,
@@ -183,8 +184,9 @@ export class Header extends bin.Class({
 	first_difat:		bin.INT32_LE,
 	num_difat:			bin.UINT32_LE,
 	difat:				bin.Buffer(109, Int32Array),
-}) {
-}
+};
+
+type Header = bin.ReadType<typeof Header>;
 
 //-----------------------------------------------------------------------------
 //	Compound Document
@@ -292,7 +294,7 @@ class Master {
 			if (dirty_header) {
 				const header_buf = new Uint8Array(512);
 				const header_stream = new bin.stream(header_buf);
-				this.header.write(header_stream);
+				header_stream.write(Header, this.header);//.write(header_stream);
 				await this.sectors.writeHeader(header_buf);
 			}
 			await this.sectors.flush();
@@ -485,11 +487,12 @@ export class Reader extends Master {
 
 	static async load(backing: Backing): Promise<Reader> {
 		const buffer	= await backing.readAt(0, 512);
-		let h;
+		let h : Header;
 		try {
-			h = new Header(new bin.stream(buffer));
+			//h = new Header(new bin.stream(buffer));
+			h = new bin.stream(buffer).read(Header);
 		} catch (_e) {
-			h = new Header({
+			h = {
 				id:					new Uint8Array(16),
 				revision:			0x003E,
 				version:			3,
@@ -505,7 +508,7 @@ export class Reader extends Master {
 				first_difat:		SecID.ENDOFCHAIN,
 				num_difat:			0,
 				difat:				(new Int32Array(109)).fill(SecID.FREE),
-			});
+			};
 		}
 		const me = new this(h, backing);
 		await me.load();
