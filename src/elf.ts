@@ -229,8 +229,8 @@ const SHF = {
 
 //--------------------	SYMBOLS
 
-const ST_INFO = bin.BitFields({
-	type:		[4, bin.Enum({
+const ST_INFO = bin.BitFields(8, {
+	type:		bin.BitField(4, bin.Enum({
 		NOTYPE:		0,				//The symbol's type is not specified
 		OBJECT:		1,				//associated with a data object
 		FUNC:		2,				//associated with a function
@@ -240,9 +240,8 @@ const ST_INFO = bin.BitFields({
 		HIOS:		12,
 		LOPROC:		13,
 		HIPROC:		15,
-	
-	})],
-	binding:	[4, bin.Enum({
+	})),
+	binding:	bin.BitField(4, bin.Enum({
 		LOCAL:		0,				//not visible outside the object file containing their definition
 		GLOBAL:		1,				//visible to all object files being combined
 		WEAK:		2,				//like global symbols, but lower precedence
@@ -250,15 +249,15 @@ const ST_INFO = bin.BitFields({
 		HIOS:		12,
 		LOPROC:		13,
 		HIPROC:		15,
-	})],
+	})),
 });
 
-const ST_OTHER = bin.BitFields({
-	visibility:	[2, bin.Enum({
+const ST_OTHER = bin.BitFields(8, {
+	visibility:	bin.BitField(2, bin.Enum({
 		DEFAULT:	0,
 		HIDDEN:		1,
 		PROTECTED:	2,
-	})],
+	})),
 	other:		6,
 });
 
@@ -704,7 +703,7 @@ export class ELFFile {
 		class Shdr extends bin.ReadClass({
 			sh_name:		Word,		//name of the section
 			sh_type:		bin.asEnum(Word, SHT),		//categorizes the section's contents and semantics
-			sh_flags:		bin.asFlags(Xword, SHF),		//miscellaneous attributes
+			sh_flags:		bin.as(Xword, bin.Flags(SHF)),		//miscellaneous attributes
 			sh_addr:		Addr,		//address
 			sh_offset:		Off,		//file offset to first byte in section
 			sh_size:		Off,		//section's size in bytes

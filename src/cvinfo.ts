@@ -254,7 +254,7 @@ const Value = bin.Switch(uint16, {
 
 
 // Property structure for classes/structs/unions
-const prop_t = bin.as(uint16, bin.BitFields({
+const prop_t = bin.as(uint16, bin.BitFields(16, {
 	packed:			1,
 	ctor:			1,
 	ovlops:			1,
@@ -266,13 +266,13 @@ const prop_t = bin.as(uint16, bin.BitFields({
 	scoped:			1,
 	hasuniquename:	1,
 	sealed:			1,
-	hfa:			[2, bin.Enum({none: 0, float: 1, double: 2, other:3})],
+	hfa:			bin.BitField(2, bin.Enum({none: 0, float: 1, double: 2, other:3})),
 	intrinsic:		1,
-	mocom:			[2, bin.Enum({NONAME: 0, ref: 1, Value: 2, 'interface':3})],
+	mocom:			bin.BitField(2, bin.Enum({NONAME: 0, ref: 1, Value: 2, 'interface':3})),
 }));
 
 // Field attribute structure
-const fldattr_t = bin.as(uint16, bin.BitFields({
+const fldattr_t = bin.as(uint16, bin.BitFields(16, {
 	access: 2,
 	mprop: 3,
 	pseudo: 1,
@@ -283,13 +283,13 @@ const fldattr_t = bin.as(uint16, bin.BitFields({
 }));
 
 // Function attribute structure
-const funcattr_t = bin.as(uint8, bin.BitFields({
+const funcattr_t = bin.as(uint8, bin.BitFields(8, {
 	cxxreturnudt: 1,
 	ctor: 1,
 	ctorvbase: 1,
 }));
 
-const modifier_t = bin.as(uint16, bin.BitFields({
+const modifier_t = bin.as(uint16, bin.BitFields(16, {
 	constant: 1,
 	volatile: 1,
 	unaligned: 1,
@@ -350,9 +350,9 @@ enum pmtype_e {
 };
 
 const Pointer_16t = {
-	attr: bin.as(uint32, bin.BitFields({
-		ptrtype:	[5, bin.Enum(ptrtype_e)],
-		ptrmode:	[3, bin.Enum(ptrmode_e)],
+	attr: bin.as(uint32, bin.BitFields(32, {
+		ptrtype:	bin.BitField(5, bin.Enum(ptrtype_e)),
+		ptrmode:	bin.BitField(3, bin.Enum(ptrmode_e)),
 		isflat32: 	1,
 		isvolatile:	1,
 		isconst:	1,
@@ -377,9 +377,9 @@ const Pointer_16t = {
 
 const Pointer = {
 	utype: type_t,
-	attr: bin.as(uint32, bin.BitFields({
-		ptrtype:	[5, bin.Enum(ptrtype_e)],
-		ptrmode:	[3, bin.Enum(ptrmode_e)],
+	attr: bin.as(uint32, bin.BitFields(32, {
+		ptrtype:	bin.BitField(5, bin.Enum(ptrtype_e)),
+		ptrmode:	bin.BitField(3, bin.Enum(ptrmode_e)),
 		isflat32: 1,
 		isvolatile: 1,
 		isconst: 1,
@@ -442,7 +442,7 @@ const Matrix = {
 	rows: uint32,
 	cols: uint32,
 	majorStride: uint32,
-	_: bin.as(uint32, bin.BitFields({
+	_: bin.as(uint32, bin.BitFields(32, {
 		row_major: 1,
 		unused: 7,
 	})),
@@ -938,7 +938,7 @@ const SYMTYPE = {
 				off: uint32,
 				seg: uint16,
 			},
-			flags: bin.as(uint8, bin.BitFields({
+			flags: bin.as(uint8, bin.BitFields(8, {
 				PFLAG_NOFPO: 1,
 				PFLAG_INT: 1,
 				PFLAG_FAR: 1,
@@ -970,7 +970,7 @@ enum DEBUG_S {
 // Line information
 const LineInfo = {
 	offset: uint32,
-	_: bin.as(uint32, bin.BitFields({
+	_: bin.as(uint32, bin.BitFields(32, {
 		linenumStart: 24,
 		deltaLineEnd: 7,
 		fStatement: 1,

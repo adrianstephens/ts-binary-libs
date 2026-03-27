@@ -38,8 +38,10 @@ async function openWriteFile(filename: string) {
 		const data = await fs.readFile(path.join(__dirname, 'test.zip'));
 		const fileIn = new bin.stream(data);
 		const zipFile = new zip.ZIPreaderCD(fileIn);
+		await zipFile.ready;
 		console.log(`got ${zipFile.entries.length}`);
 	}
+	/*
 	{
 		const fileIn = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip'));
 		const zipFile = new zip.ZIPreaderCD(fileIn);
@@ -61,17 +63,6 @@ async function openWriteFile(filename: string) {
 		const zipFile = new zip.ZIPreaderCD(file);
 		const duration = Date.now() - time;
 		console.log(`got ${zipFile.entries.length} in ${duration}ms`);
-/*		for (const zf of zipFile) {
-			console.log(zf.filename);
-			const data = await zf.extract(file);
-			if (data) {
-				console.log(`  compressed: ${zf.compressed_size} bytes`);
-				console.log(`  uncompressed: ${data.length} bytes`);
-				zf.check(data);
-			} else {
-				console.log('  no data');
-			}
-		}*/
 	}
 	{
 		await using file = await openReadFile('C:\\ProgramData\\IDrive.zip');
@@ -84,7 +75,7 @@ async function openWriteFile(filename: string) {
 			console.log(zf.filename);
 			const data = await zf.extract(file);
 			if (data) {
-				console.log(`  compressed: ${(await zf.data).length} bytes`);
+				console.log(`  compressed: ${zf.compressed_size} bytes`);
 				console.log(`  uncompressed: ${data.length} bytes`);
 				zf.check(data);
 			} else {
@@ -110,12 +101,12 @@ async function openWriteFile(filename: string) {
 			console.log(zf.filename);
 			const data = await zf.extract(fileIn);
 			if (data) {
-				console.log(`  compressed: ${(await zf.data).length} bytes`);
+				console.log(`  compressed: ${zf.compressed_size} bytes`);
 				console.log(`  uncompressed: ${data.length} bytes`);
 				zf.check(data);
 				const zf2 = await zipOut.write(zf.filename, data, zf.method);
 				const _zf3 = await zipOutSync.write(zf.filename, data, zf.method);
-				console.log(`  recompressed: ${(await zf2?.data)?.length} bytes`);
+				console.log(`  recompressed: ${zf2?.compressed_size} bytes`);
 			} else {
 				console.log('  no data');
 			}
@@ -139,4 +130,5 @@ async function openWriteFile(filename: string) {
 			}
 		}
 	}
-})();//.catch(error => console.error('fatal', error));
+	*/
+})();

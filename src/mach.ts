@@ -356,8 +356,8 @@ const command = {
 	cmdsize:	uint32,
 };
 
-const SECTION_FLAGS = bin.BitFields({
-	TYPE: [8, bin.Enum({
+const SECTION_FLAGS = bin.BitFields(32, {
+	TYPE: bin.BitField(8, bin.Enum({
 		REGULAR:							0x0,	// regular section
 		ZEROFILL:							0x1,	// zero fill on demand section
 		CSTRING_LITERALS:					0x2,	// section with only literal C strings
@@ -381,14 +381,14 @@ const SECTION_FLAGS = bin.BitFields({
 		THREAD_LOCAL_VARIABLES:				0x13,	// TLV descriptors
 		THREAD_LOCAL_VARIABLE_POINTERS:		0x14,	// pointers to TLV descriptors
 		THREAD_LOCAL_INIT_FUNCTION_POINTERS:0x15,	// functions to call to initialize TLV values
-	})],
-	ATTRIBUTES: [24, bin.BitFields({
-		SYS: [16,	bin.Flags({
+	})),
+	ATTRIBUTES: bin.BitFields(24, {
+		SYS: bin.BitField(16, bin.Flags({
 			SOME_INSTRUCTIONS: 		0x0004,	// section contains some machine instructions
 			EXT_RELOC: 				0x0002,	// section has external relocation entries
 			LOC_RELOC: 				0x0001,	// section has local relocation entries
-		}, true)],
-		USR: [8, bin.Flags({
+		}, true)),
+		USR: bin.BitField(8, bin.Flags({
 			PURE_INSTRUCTIONS:		0x80,	// section contains only true machine instructions
 			NO_TOC:					0x40,	// section contains coalesced symbols that are not to be in a ranlib table of contents
 			STRIP_STATIC_SYMS:		0x20,	// ok to strip static symbols in this section in files with the MH_DYLDLINK flag
@@ -396,8 +396,8 @@ const SECTION_FLAGS = bin.BitFields({
 			LIVE_SUPPORT:			0x08,	// blocks are live if they reference live blocks
 			SELF_MODIFYING_CODE:	0x04,	// Used with i386 code stubs written on by dyld
 			DEBUG:					0x02,	// a debug section
-		}, true)],
-	})],
+		}, true)),
+	}),
 });
 
 function section(bits: 32|64) {
@@ -531,19 +531,19 @@ const thread_command = {
 
 
 // SYMTAB
-const nlist_flags = bin.BitFields({
+const nlist_flags = bin.BitFields(8, {
 	ext: 1,
-	type: [3, bin.Enum({
+	type: bin.BitField(3, bin.Enum({
 		UNDF:	0,		// undefined, n_sect == NO_SECT
 		ABS:	1,		// absolute, n_sect == NO_SECT
 		INDR:	5,		// indirect
 		PBUD:	6,		// prebound undefined (defined in a dylib)
 		SECT:	7,		// defined in section number n_sect
-	})],
+	})),
 	pext: 1,
-	stab: [3, bin.Enum({
+	stab: bin.BitField(3, bin.Enum({
 
-	})],
+	})),
 });
 /*
 //masks
@@ -589,16 +589,16 @@ const nlist_flags = bin.BitFields({
 	LENG	= 0xfe,		// second stab entry with length information
 }
 */
-const nlist_desc = bin.BitFields({
-	ref: [3, bin.Enum({
+const nlist_desc = bin.BitFields(16, {
+	ref: bin.BitField(3, bin.Enum({
 		UNDEFINED_NON_LAZY:			0,
 		UNDEFINED_LAZY:				1,
 		DEFINED:					2,
 		PRIVATE_DEFINED:			3,
 		PRIVATE_UNDEFINED_NON_LAZY:	4,
 		PRIVATE_UNDEFINED_LAZY:		5,
-	})],
-	flags: [5, bin.Flags({
+	})),
+	flags: bin.BitField(5, bin.Flags({
 		ARM_THUMB_DEF:					1 << 0,	// symbol is a Thumb function (ARM)
 		REF_DYNAMIC:					1 << 1,
 		NO_DEAD_STRIP:					1 << 2,	// symbol is not to be dead stripped
@@ -607,7 +607,7 @@ const nlist_desc = bin.BitFields({
 		WEAK_DEF:						1 << 4,	// coalesed symbol is a weak definition
 		//REF_TO_WEA					1 << 4,	// reference to a weak symbol
 		//SYMBOL_RESOLVER:				0x0100,
-	}, true)],
+	}, true)),
 	align: 8
 	//MAX_LIBRARY_ORDINAL				= 0xfd	<< 8,
 	//DYNAMIC_LOOKUP_ORDINAL			= 0xfe	<< 8,
@@ -664,12 +664,12 @@ function module(bits:32|64) {
 	};
 }
 
-const symbol_ref = bin.as(uint32, bin.BitFields({
+const symbol_ref = bin.as(uint32, bin.BitFields(32, {
 	symbol_index: 24,	// index into the symbol table
 	flags: 8
 }));
 
-const hint = bin.as(uint32, bin.BitFields({
+const hint = bin.as(uint32, bin.BitFields(32, {
 	sub_image: 8,	// index into the sub images
 	toc: 24			// index into the table of contents
 }));
@@ -679,9 +679,9 @@ const version_min = {
 	reserved:	uint32,	// zero
 };
 
-const REBASE = bin.BitFields({
+const REBASE = bin.BitFields(8, {
 	immediate: 4,
-	opcode:		[4, bin.Enum({
+	opcode:		bin.BitField(4, bin.Enum({
 		DONE:								0,
 		SET_TYPE_IMM:						1,
 		SET_SEGMENT_AND_OFFSET_ULEB:		2,
@@ -691,15 +691,15 @@ const REBASE = bin.BitFields({
 		DO_REBASE_ULEB_TIMES:				6,
 		DO_REBASE_ADD_ADDR_ULEB:			7,
 		DO_REBASE_ULEB_TIMES_SKIPPING_ULEB: 8,
-	})]
+	}))
 	//TYPE_POINTER							= 1,
 	//TYPE_TEXT_ABSOLUTE32					= 2,
 	//TYPE_TEXT_PCREL32						= 3,
 });
 
-const BIND = bin.BitFields({
+const BIND = bin.BitFields(8, {
 	immediate: 4,
-	opcode:		[4, bin.Enum({
+	opcode:		bin.BitField(4, bin.Enum({
 		DONE:								0,
 		SET_DYLIB_ORDINAL_IMM:				1,
 		SET_DYLIB_ORDINAL_ULEB:				2,
@@ -713,7 +713,7 @@ const BIND = bin.BitFields({
 		DO_BIND_ADD_ADDR_ULEB:				10,
 		DO_BIND_ADD_ADDR_IMM_SCALED:		11,
 		DO_BIND_ULEB_TIMES_SKIPPING_ULEB:	 12,
-	})]
+	}))
 	//TYPE_POINTER							= 1,
 	//TYPE_TEXT_ABSOLUTE32					= 2,
 	//TYPE_TEXT_PCREL32						= 3,
@@ -793,7 +793,7 @@ const dyld_chained_starts_in_segment = {
 
 const dyld_chained_starts_in_image	= bin.Array(uint32, bin.Offset(uint32, dyld_chained_starts_in_segment));
 
-const dyld_chained_import = bin.as(uint32, bin.BitFields({
+const dyld_chained_import = bin.as(uint32, bin.BitFields(32,{
 	lib_ordinal : 8,
 	weak_import : 1,
 	name_offset : 23,
@@ -805,7 +805,7 @@ const dyld_chained_import_addend = {
 };
 
 const dyld_chained_import_addend64 = {
-	import: bin.as(uint64, bin.BitFields({
+	import: bin.as(uint64, bin.BitFields(64, {
 		lib_ordinal : 16,
 		weak_import : 1,
 		reserved	: 15,
@@ -849,7 +849,7 @@ class dyld_chained_fixups extends bin.ReadClass({
 	}
 }
 */
-const dyld_chained_ptr_64_bind = bin.as(uint64, bin.BitFields({
+const dyld_chained_ptr_64_bind = bin.as(uint64, bin.BitFields(64, {
 	ordinal		: 24,
 	addend	 	: 8,
 	reserved 	: 19,
@@ -857,7 +857,7 @@ const dyld_chained_ptr_64_bind = bin.as(uint64, bin.BitFields({
 	bind		: 1, // set to 1
 }));
 
-const dyld_chained_ptr_64_rebase = bin.as(uint64, bin.BitFields({
+const dyld_chained_ptr_64_rebase = bin.as(uint64, bin.BitFields(64, {
 	target	 	: 36,
 	high8		: 8,
 	reserved 	: 7,
@@ -995,7 +995,7 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 	},
 
 	[CMD.SOURCE_VERSION]:			{
-		version:		bin.as(bin.UINT64_BE, bin.BitFields({a:24, b:10, c:10, d:10, e:10}))	// A.B.C.D.E packed as a24.b10.c10.d10.e10
+		version:		bin.as(bin.UINT64_BE, bin.BitFields(64, {a:24, b:10, c:10, d:10, e:10}))	// A.B.C.D.E packed as a24.b10.c10.d10.e10
 	},
 	[CMD.BUILD_VERSION]:			{
 		platform:		bin.asEnum(uint32, PLATFORM),
@@ -1055,7 +1055,7 @@ export class MachFile {
 		const file	= new bin.stream(data, be);
 		const h 	= bin.read(file, header);
 		const cpu	= CPU_TYPE[h.cputype as keyof typeof CPU_TYPE];
-		h.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+h.cpusubtype);
+		h.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu]).to(+h.cpusubtype);
 		if (bits === 64)
 			file.seek(file.tell() + 4);
 
@@ -1126,7 +1126,7 @@ export class FATMachFile {
 		for (const arch of header.archs) {
 			const cpu	= CPU_TYPE[arch.cputype as keyof typeof CPU_TYPE];
 			const data	= file.view_at(Uint8Array, arch.offset, arch. size);
-			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu])(+arch.cpusubtype);
+			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu]).to(+arch.cpusubtype);
 			arch.contents	= new MachFile(data, mem);
 		}
 	}

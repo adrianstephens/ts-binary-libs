@@ -1,4 +1,5 @@
 import * as bin from '@isopodlabs/binary';
+import { MaybePromise } from '@isopodlabs/binary/dist/utils';
 import zlib from 'zlib';
 
 const FLAGS = {
@@ -33,7 +34,7 @@ const METHOD = {
 } as const;
 type METHOD = typeof METHOD[keyof typeof METHOD];
 
-const time_bits = bin.BitFields({seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7});
+const time_bits = bin.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
 const ZipTime = bin.as(bin.UINT32_LE,
 	x => { const t = time_bits.to(x); return new Date(t.years1980 + 1980, t.month, t.day, t.hour, t.minute, t.seconds2 * 2);},
 	t => time_bits.from({years1980: t.getFullYear() - 1980, month: t.getMonth(), day: t.getDate(), hour: t.getHours(), minute: t.getMinutes(), seconds2: t.getSeconds() >> 1})
@@ -104,6 +105,8 @@ const extra = bin.Size('extra_length', bin.RemainingRepeat({
 	})))
 }, v => makeExtra(v)));
 
+type extra = bin.ReadType<typeof extra>;
+
 const SIG = {
 	PK:					0x4b50,
 	FILE_HEADER:		0x04034b50,
@@ -126,24 +129,21 @@ const common_header = {
 	extra_length:		bin.UINT16_LE,
 };
 
-const file_header0 = {
-	...common_header,
-	filename:			bin.String('filename_length'),
-	extra, 
-};
-
-export type file_header0 = bin.ReadType<typeof file_header0>;
+function at<T, S extends bin._stream | bin.async._stream>(s: S, offset: number, callback: (s: S) => MaybePromise<T>) {
+	const current = s.tell();
+	s.skip(offset);
+	return bin.utils.after(callback(s), result => (s.seek(current), result));
+}
 
 const file_header = {
-	...file_header0,
-	data:				bin.Size(
-		s => {
-			const obj = s.obj as bin.ReadType<typeof file_header0>;
-			let size = obj.compressed_size;
-			if (obj.flags.HAS_DATADESCRIPTOR && size === 0 && obj.method === METHOD.DEFLATED)
-				size = get_deflated_size(s);
-			return Number(size);
-		}, bin.Defered(bin.RemainingBuffer(Uint8Array))
+	...common_header,
+	filename:			bin.String('filename_length'),
+	extra,
+	_: bin.If(s => s.obj.flags.HAS_DATADESCRIPTOR || (s.obj.size === 0 && s.obj.method === METHOD.DEFLATED), {
+		compressed_size:	bin.Func(s => at(s, 0, get_deflated_size)),
+	}),
+	data:				bin.Size('compressed_size',
+		bin.Defered(bin.RemainingBuffer(Uint8Array))
 	),
 };
 
@@ -206,7 +206,7 @@ const Chunk = {
 	}),
 };
 
-export type Chunk = bin.ReadType<typeof Chunk>;
+//export type Chunk = bin.ReadType<typeof Chunk>;
 
 const CRC32_table = new Uint32Array(Array.from({length: 256}, (_, crc) => {
 	for (let k = 0; k < 8; k++)
@@ -275,34 +275,33 @@ class encryption {
 // ZIPfile - represents a file in the ZIP archive, with metadata and methods to extract and check integrity
 //-----------------------------------------------------------------------------
 
-export type ZIPheader0 = bin.ReadType<typeof file_header>;
+//type file_header = bin.ReadType<typeof file_header>;
 
-type ZIPheader = Pick<ZIPheader0, 'flags'|'method'|'compressed_size'|'uncompressed_size'|'mtime'|'crc'|'filename'|'data'> & {
+type ZIPheader = Pick<bin.ReadType<typeof file_header>, 'flags'|'method'|'compressed_size'|'uncompressed_size'|'mtime'|'atime'|'ctime'|'uid'|'gid'|'crc'|'filename'|'data'> & {
 	offset?:      number|bigint,
 	comment?:     string,
-}
-/*type ZIPheader = bin.utils.OptionalityPreservingPick<bin.ReadType<typeof file_header>, 'flags'|'method'|'uncompressed_size'|'mtime'|'crc'|'filename'|'data'|'atime'|'ctime'>
-& {
-	offset?:		number,
-	comment?:		string,
 };
-*/
+
 function makeExtra(_v: any) {
+	const v = _v as ZIPheader;
 	const extra: any[] = [];
-	/*
-	if (v.uncompressed_size >= 0xffffffff) {//} || v.compressed_size >= 0xffffffff || v.offset >= 0xffffffff) {
+
+	if (v.uncompressed_size >= 0xffffffff || v.compressed_size >= 0xffffffff || (v.offset && v.offset >= 0xffffffff))
 		extra.push({id: EXTENSION.ZIP64, uncompressed_size: v.uncompressed_size, compressed_size: v.compressed_size, offset: v.offset});
-	}
-	if (v.atime || v.ctime || v.mtime.getSeconds() % 2) {
+
+	if (v.atime || v.ctime || v.mtime.getSeconds() % 2)
 		extra.push({id: EXTENSION.EXTENDED_TIMESTAMP, flags: 1, mtime: v.mtime, atime: v.atime, ctime: v.ctime});
-	}
-		*/
+
+	if (v.uid || v.gid)
+		extra.push({id: EXTENSION.UNIX_UID_GID, uid: v.uid, gid: v.gid});
+
 	return extra;
 }
 
 
 export class ZIPfile {
 	filename:			string;
+	compressed_size:	number;
 	uncompressed_size:	number;
 	flags:				ZIPheader['flags'];
 	method:				ZIPheader['method'];
@@ -318,7 +317,8 @@ export class ZIPfile {
 
 	constructor(h: ZIPheader) {
 		this.filename			= h.filename;
-		this.uncompressed_size	= Number(h.uncompressed_size ?? 0);
+		this.uncompressed_size	= Number(h.uncompressed_size);
+		this.compressed_size	= Number(h.compressed_size);
 		this.flags				= h.flags;
 		this.method				= h.method;
 		this.crc				= h.crc;
@@ -475,17 +475,19 @@ async function get_central_dir_async(r: bin.stream2): Promise<{ offset: number; 
 export class ZIPreaderCD {
 	entries:	ZIPfile[] = [];
 	root	= ZIPfile.make('root/');
-	ready	= Promise.resolve();
+	ready	= Promise.resolve<ZIPfile[] | void>([]);
 
 	constructor(file0: bin._stream | bin.async._stream) {
 		const file = file0 as bin.stream2;
-		this.ready = get_central_dir_async(file).then(async cd => {
+		this.ready = (async () => {
+			const cd = await get_central_dir_async(file);
 			if (!cd)
 				return;
 
 			file.seek(cd.offset);
 			for (;;) {
 				try {
+					console.log(`read central dir entry at ${file.tell()}`);
 					const chunk = await file.read(Chunk);
 					if (chunk.sig != SIG.CENTRALDIR_ENTRY)
 						break;
@@ -498,7 +500,8 @@ export class ZIPreaderCD {
 				}
 
 			}
-		});
+			return this.entries;
+		})();
 	}
 
 	addEntry(entry: ZIPfile) {
