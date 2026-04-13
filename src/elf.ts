@@ -229,7 +229,7 @@ const SHF = {
 
 //--------------------	SYMBOLS
 
-const ST_INFO = bin.BitFields(8, {
+const ST_INFO = bin.utils.BitFields(8, {
 	type:		bin.BitField(4, bin.Enum({
 		NOTYPE:		0,				//The symbol's type is not specified
 		OBJECT:		1,				//associated with a data object
@@ -252,7 +252,7 @@ const ST_INFO = bin.BitFields(8, {
 	})),
 });
 
-const ST_OTHER = bin.BitFields(8, {
+const ST_OTHER = bin.utils.BitFields(8, {
 	visibility:	bin.BitField(2, bin.Enum({
 		DEFAULT:	0,
 		HIDDEN:		1,

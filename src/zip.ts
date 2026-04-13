@@ -1,6 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import { MaybePromise } from '@isopodlabs/binary/dist/utils';
-import zlib from 'zlib';
+import {Cancellation, compress, decompress, Hierarchy, UnixMode} from './common';
 
 const FLAGS = {
 	NONE:					0,
@@ -15,7 +14,7 @@ const FLAGS = {
 	MASK_HEADER_VALUES:		1 << 13,
 } as const;
 
-const METHOD = {
+export const METHOD = {
 	NO_COMPRESSION:			0,
 	SHRUNK:					1,
 	FACTOR1:				2,
@@ -34,7 +33,40 @@ const METHOD = {
 } as const;
 type METHOD = typeof METHOD[keyof typeof METHOD];
 
-const time_bits = bin.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
+// ZIP Central Directory - 'Made By' OS values (high byte)
+export const OS = {
+	MSDOS:	0,
+	UNIX:	3,
+	NTFS:	10,
+	MACOS:	19,
+} as const;
+
+// ZIP Central Directory - 'Made By' spec versions (low byte, version * 10)
+export const Version = {
+	V1_0:	10,
+	V1_1:	11,
+	V2_0:	20,
+	V4_5:	45,
+} as const;
+
+export const InternalAttr = {
+	BINARY:	0x0000,
+	TEXT:	0x0001,
+} as const;
+
+export const DosAttr = {
+	READONLY:	0x01,
+	HIDDEN:		0x02,
+	SYSTEM:		0x04,
+	DIRECTORY:	0x10,
+	ARCHIVE:	0x20,
+} as const;
+
+function madeBy(os: number, ver: number) {
+	return {ver, os};
+}
+
+const time_bits = bin.utils.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
 const ZipTime = bin.as(bin.UINT32_LE,
 	x => { const t = time_bits.to(x); return new Date(t.years1980 + 1980, t.month, t.day, t.hour, t.minute, t.seconds2 * 2);},
 	t => time_bits.from({years1980: t.getFullYear() - 1980, month: t.getMonth(), day: t.getDate(), hour: t.getHours(), minute: t.getMinutes(), seconds2: t.getSeconds() >> 1})
@@ -103,7 +135,7 @@ const extra = bin.Size('extra_length', bin.RemainingRepeat({
 			})),
 		},
 	})))
-}, v => makeExtra(v)));
+}, (s, _v) => makeExtra(s.obj)));
 
 type extra = bin.ReadType<typeof extra>;
 
@@ -129,10 +161,10 @@ const common_header = {
 	extra_length:		bin.UINT16_LE,
 };
 
-function at<T, S extends bin._stream | bin.async._stream>(s: S, offset: number, callback: (s: S) => MaybePromise<T>) {
-	const current = s.tell();
-	s.skip(offset);
-	return bin.utils.after(callback(s), result => (s.seek(current), result));
+function makeBuffer<T extends bin.Type>(type: T, data: bin.ReadType<T>): Uint8Array {
+	const s = new bin.growingStream();
+	s.write(type, data);
+	return s.terminate();
 }
 
 const file_header = {
@@ -140,12 +172,14 @@ const file_header = {
 	filename:			bin.String('filename_length'),
 	extra,
 	_: bin.If(s => s.obj.flags.HAS_DATADESCRIPTOR || (s.obj.size === 0 && s.obj.method === METHOD.DEFLATED), {
-		compressed_size:	bin.Func(s => at(s, 0, get_deflated_size)),
+		compressed_size:	bin.Search(makeBuffer(bin.UINT32_LE, SIG.DATADESCRIPTOR)),
 	}),
 	data:				bin.Size('compressed_size',
 		bin.Defered(bin.RemainingBuffer(Uint8Array))
 	),
 };
+
+const MadeBy = {ver: bin.UINT8, os: bin.asEnum2(bin.UINT8, OS)};
 
 const Chunk = {
 	sig:	bin.UINT32_LE,
@@ -157,7 +191,7 @@ const Chunk = {
 			uncompressed_size:	bin.UINT32_LE,
 		},
 		[SIG.CENTRALDIR_ENTRY]:	{
-			madeby:	bin.UINT16_LE,
+			madeby:				MadeBy,	
 			...common_header,
 			comment_length:		bin.UINT16_LE,
 			disk_number_start:	bin.UINT16_LE,
@@ -167,7 +201,7 @@ const Chunk = {
 			filename:			bin.String('filename_length'),
 			extra,
 			comment:			bin.String('comment_length'),
-			data:				bin.Offset('offset', bin.Defered(bin.as(bin.Struct({
+			data:				bin.ReadOnly(bin.Offset('offset', bin.Defered(bin.as(bin.Struct({
 				sig:				bin.Expect(bin.UINT32_LE,SIG.FILE_HEADER),
 				...common_header,
 				filename:			bin.String('filename_length'),
@@ -176,7 +210,7 @@ const Chunk = {
 					s.obj.obj.compressed_size,
 					Uint8Array
 				),
-			}), x => x.data))),
+			}), x => x.data)))),
 		},
 		[SIG.CENTRALDIR_END]:	{
 			disk_no:			bin.UINT16_LE,
@@ -185,7 +219,7 @@ const Chunk = {
 			total_entries: 		bin.UINT16_LE,
 			dir_size:			bin.UINT32_LE,
 			dir_offset:			bin.UINT32_LE,
-			comment:			bin.String('comment_length'),
+			comment:			bin.RemainingString()
 		},
 		[SIG.CENTRALDIR_PTR64]:	{
 			disk:				bin.UINT32_LE,
@@ -193,7 +227,7 @@ const Chunk = {
 			num_disks:			bin.UINT32_LE,
 		},
 		[SIG.CENTRALDIR_END64]:	bin.Size(bin.as(bin.UINT64_LE, x => Number(x)), {
-			madeby:				bin.UINT16_LE,
+			madeby:				MadeBy,
 			version:			bin.UINT16_LE,
 			disk_no:			bin.UINT32_LE,
 			dir_disk:			bin.UINT32_LE,
@@ -206,44 +240,7 @@ const Chunk = {
 	}),
 };
 
-//export type Chunk = bin.ReadType<typeof Chunk>;
-
-const CRC32_table = new Uint32Array(Array.from({length: 256}, (_, crc) => {
-	for (let k = 0; k < 8; k++)
-		crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-	return crc >>> 0;
-}));
-
-function CRC32_calc(crc: number, i: number) {
-	return (CRC32_table[(crc ^ i) & 0xff] ^ (crc >>> 8)) >>> 0;
-}
-
-type InflateRawInternal = zlib.InflateRaw & {
-	_processChunk(chunk: Uint8Array, flushFlag: number): Uint8Array;
-	bytesWritten: number;
-	close(): void;
-};
-
-// Uses Node zlib internals: bytesWritten is compressed input consumed (total_in).
-function get_deflated_size(r: bin._stream | bin.async._stream): number {
-	if (r.kind === 'async')
-		throw new Error('ZIP local deflated size probing requires sync stream');
-
-	const remain = r.remaining();
-	if (remain === undefined || remain <= 0)
-		return 0;
-
-	const inflater = zlib.createInflateRaw() as InflateRawInternal;
-	try {
-		inflater._processChunk(r.view_at(Uint8Array, r.tell(), remain), zlib.constants.Z_SYNC_FLUSH);
-		const compressed_size = inflater.bytesWritten;
-		return compressed_size > 0 ? compressed_size : 0;
-	} catch {
-		return 0;
-	} finally {
-		inflater.close();
-	}
-}
+const CRC32 = bin.utils.CRC(0xedb88320, 0xffffffff, 0xffffffff);
 
 class encryption {
 	K0	= 0x12345678;
@@ -254,9 +251,9 @@ class encryption {
 			this.update_keys(i.charCodeAt(0));
 	}
 	update_keys(i: number) {
-		this.K0	= CRC32_calc(this.K0, i);
+		this.K0	= CRC32.byte(this.K0, i);
 		this.K1	= (this.K1 + (this.K0 & 0xff)) * 134775813 + 1;
-		this.K2	= CRC32_calc(this.K2, this.K1 >> 24);
+		this.K2	= CRC32.byte(this.K2, this.K1 >> 24);
 	}
 	decrypt_byte() {
 		const temp = this.K2 | 2;
@@ -272,14 +269,15 @@ class encryption {
 }
 
 //-----------------------------------------------------------------------------
-// ZIPfile - represents a file in the ZIP archive, with metadata and methods to extract and check integrity
+// Entry - represents an entry in the ZIP archive
 //-----------------------------------------------------------------------------
 
-//type file_header = bin.ReadType<typeof file_header>;
-
-type ZIPheader = Pick<bin.ReadType<typeof file_header>, 'flags'|'method'|'compressed_size'|'uncompressed_size'|'mtime'|'atime'|'ctime'|'uid'|'gid'|'crc'|'filename'|'data'> & {
-	offset?:      number|bigint,
-	comment?:     string,
+type ZIPheader = Pick<bin.ReadType<typeof file_header>,
+	'version'|'flags'|'method'|'compressed_size'|'uncompressed_size'|'mtime'|'atime'|'ctime'|'uid'|'gid'|'crc'|'filename'|'data'
+> & {
+	offset?:			number|bigint,
+	attributes_ext?:	number,
+	comment?:			string,
 };
 
 function makeExtra(_v: any) {
@@ -289,6 +287,11 @@ function makeExtra(_v: any) {
 	if (v.uncompressed_size >= 0xffffffff || v.compressed_size >= 0xffffffff || (v.offset && v.offset >= 0xffffffff))
 		extra.push({id: EXTENSION.ZIP64, uncompressed_size: v.uncompressed_size, compressed_size: v.compressed_size, offset: v.offset});
 
+	v.uncompressed_size = fix32(v.uncompressed_size);
+	v.compressed_size   = fix32(v.compressed_size);
+	if (v.offset !== undefined)
+		v.offset = fix32(v.offset);
+
 	if (v.atime || v.ctime || v.mtime.getSeconds() % 2)
 		extra.push({id: EXTENSION.EXTENDED_TIMESTAMP, flags: 1, mtime: v.mtime, atime: v.atime, ctime: v.ctime});
 
@@ -296,52 +299,66 @@ function makeExtra(_v: any) {
 		extra.push({id: EXTENSION.UNIX_UID_GID, uid: v.uid, gid: v.gid});
 
 	return extra;
+
+	function fix32(n: number | bigint) {
+		return Number(n >= 0xffffffffn ? 0xffffffffn : n);
+	}
 }
 
 
-export class ZIPfile {
+export class Entry {
 	filename:			string;
+	children?:			Map<string, Entry>;
+
 	compressed_size:	number;
 	uncompressed_size:	number;
+	version:			number;
 	flags:				ZIPheader['flags'];
 	method:				ZIPheader['method'];
 	crc:				number;
-	offset?:			number;
 	comment:			string;
 	mtime:				Date;
 	atime?:				Date;
 	ctime?:				Date;
+	attributes?:		number;
 	data:				bin.DeferedType<Uint8Array>;
-
-	children?:			Map<string, ZIPfile>;
 
 	constructor(h: ZIPheader) {
 		this.filename			= h.filename;
 		this.uncompressed_size	= Number(h.uncompressed_size);
 		this.compressed_size	= Number(h.compressed_size);
+		this.version			= h.version;
 		this.flags				= h.flags;
 		this.method				= h.method;
 		this.crc				= h.crc;
 		this.mtime				= h.mtime!;
-		this.offset				= h.offset ? Number(h.offset) : undefined;
 		this.comment			= h.comment ?? '';
 		this.data				= h.data;
+		this.attributes			= h.attributes_ext;
 
 		if (this.filename.endsWith('/'))
-			this.children = new Map<string, ZIPfile>();
+			this.children = new Map<string, Entry>();
 	}
 
 	get isDirectory() {
-		return this.filename.endsWith('/');
+		return !!this.children;
+	}
+	get isSymbolicLink() {
+		return !!this.attributes && ((this.attributes >> 16) & UnixMode.TYPEMASK) === UnixMode.SYMLINK;
 	}
 
-	async extract(_r: bin._stream | bin.async._stream, password?: string): Promise<Uint8Array | null> {
+	async extract(password?: string): Promise<Uint8Array | null> {
 		let data = await this.data.get();
+
 		switch (this.method) {
 			case METHOD.NO_COMPRESSION:
 				break;
 			case METHOD.DEFLATED:
-				data = await new Promise((resolve, reject) => zlib.inflateRaw(data, (err, result) => err ? reject(err) : bin.resolved(new Uint8Array(result))));
+				try {
+					data = await decompress('deflate-raw')(data);
+				} catch (e) {
+					console.error('Decompression failed', e);
+				}
 				break;
 			default:
 				return null;
@@ -365,11 +382,7 @@ export class ZIPfile {
 			return false;
 		}
 
-		let crc = 0xffffffff;
-		for (const byte of data)
-			crc = CRC32_calc(crc, byte);
-		crc = (crc ^ 0xffffffff) >>> 0;
-
+		const crc = CRC32.buffer(data);
 		if (crc !== this.crc) {
 			console.log(`CRC mismatch: expected ${this.crc.toString(16)}, got ${crc.toString(16)}`);
 			return false;
@@ -377,71 +390,54 @@ export class ZIPfile {
 		return true;
 	}
 
-	static make(filename: string): ZIPfile {
-		return new this({
+	set(data: Uint8Array) {
+		let compressed: Promise<Uint8Array>;
+		switch (this.method) {
+			case METHOD.NO_COMPRESSION:
+				compressed = Promise.resolve(data);
+				break;
+			case METHOD.DEFLATED:
+				compressed = compress('deflate-raw')(data);
+				break;
+			default:
+				throw new Error(`Unsupported compression method: ${this.method}`);
+		}
+
+		this.mtime 				= new Date();
+		this.uncompressed_size	= data.length;
+		this.crc				= CRC32.buffer(data);
+		this.data				= bin.resolved(compressed);
+	}
+
+	static make(filename: string, method: METHOD = METHOD.NO_COMPRESSION, data?: Uint8Array): Entry {
+		const file = new this({
 			filename,
-			method: METHOD.NO_COMPRESSION,
-			flags: {},
-			crc: 0,
-			uncompressed_size: 0,
-			compressed_size: 0,
-			mtime: new Date(),
-			data: bin.resolved(new Uint8Array()),
+			method,
+			version:			0x14,
+			flags:				{},
+			crc:				0,
+			uncompressed_size:	0,
+			compressed_size:	0,
+			mtime:				new Date(),
+			data:				bin.resolved(new Uint8Array()),
 		});
+		if (data)
+			file.set(data);
+		return file;
 	}
 
 }
 
 //-----------------------------------------------------------------------------
-// ZIPreader - reads local file headers (sequentially)
-// ZIPreaderCD - reads central directory and allows random access to files
-// ZIPwriter - writes files and central directory
+// Central Directory
 //-----------------------------------------------------------------------------
 
-export class ZIPreader {
-	static check(data: Uint8Array): boolean {
-		const header = bin.read(new bin.stream(data), Chunk);
-		return header.sig === SIG.FILE_HEADER;
-	}
-
-	private next = 0;
-	private datadesc = false;
-
-	constructor(private file: bin.stream2) {
-	}
-
-	async Next(): Promise<ZIPfile | null> {
-		const file = this.file;
-		file.seek(this.next);
-		if (this.datadesc) {
-			const tell	= file.tell();
-			const chunk = await file.read(Chunk);
-			if (chunk.sig !== SIG.DATADESCRIPTOR)
-				file.seek(tell + 12);
-		}
-
-		const chunk = await file.read(Chunk);
-		if (chunk.sig === SIG.FILE_HEADER) {
-			const zf		= new ZIPfile(chunk);
-			if (chunk.flags.HAS_DATADESCRIPTOR)
-				await zf.data.get();	//wait for seek to complete before reading datadescriptor
-			this.next		= file.tell();
-			this.datadesc	= !!chunk.flags.HAS_DATADESCRIPTOR;
-			return zf;
-		}
-		return null;
-	}
-
-	async *[Symbol.asyncIterator]() {
-		this.next = 0;
-		let zf;
-		while ((zf = await this.Next()))
-			yield zf;
-	}
-
+interface region {
+	offset: number;
+	length: number;
 }
 
-async function get_central_dir_async(r: bin.stream2): Promise<{ offset: number; length: number } | null> {
+async function get_central_dir_async(r: bin.interop.stream): Promise<region | null> {
 	const len = r.remaining();
 	if (len === undefined)
 		return null;
@@ -472,178 +468,153 @@ async function get_central_dir_async(r: bin.stream2): Promise<{ offset: number; 
 	return null;
 }
 
-export class ZIPreaderCD {
-	entries:	ZIPfile[] = [];
-	root	= ZIPfile.make('root/');
-	ready	= Promise.resolve<ZIPfile[] | void>([]);
+//-----------------------------------------------------------------------------
+// Document - represents a ZIP archive, containing multiple entries and a hierarchy
+//-----------------------------------------------------------------------------
 
-	constructor(file0: bin._stream | bin.async._stream) {
-		const file = file0 as bin.stream2;
-		this.ready = (async () => {
-			const cd = await get_central_dir_async(file);
-			if (!cd)
-				return;
+export class Document extends Hierarchy<Entry> {
+	entries:	Entry[] = [];
+	ready:		Promise<void>;
 
-			file.seek(cd.offset);
+	constructor(file?: bin._stream | bin.async._stream, cd = true) {
+		super(Entry.make('root/'), 
+			filename => Entry.make(filename),
+			entry => this.entries.splice(this.entries.indexOf(entry), 1)
+		);
+		this.ready = file ? this.readAll(file, cd) : Promise.resolve();
+	}
+
+	async readAll(file0: bin._stream | bin.async._stream, cd: boolean) {
+		const file = bin.interop.stream(file0);
+		const centralDir = cd ? await get_central_dir_async(file) : null;
+		if (centralDir) {
+			file.seek(centralDir!.offset);
 			for (;;) {
 				try {
-					console.log(`read central dir entry at ${file.tell()}`);
+					//console.log(`read central dir entry at ${file.tell()}`);
 					const chunk = await file.read(Chunk);
 					if (chunk.sig != SIG.CENTRALDIR_ENTRY)
 						break;
-					const zf = new ZIPfile(chunk);
-					this.addEntry(zf);
+
+					this.entries.push(new Entry(chunk));
 
 				} catch (e) {
 					console.error('Error reading central directory entry', e);
 					break;
 				}
-
 			}
-			return this.entries;
-		})();
-	}
 
-	addEntry(entry: ZIPfile) {
-		this.entries.push(entry);
-		const parts = entry.filename.split('/');
-		let last = parts.pop()!;
-		if (last === '') // directory
-			last = parts.pop()!;
-		
-		const current = parts.reduce((current, part, i) => {
-			if (!current.children!.has(part)) {
-				const fake = ZIPfile.make(parts.slice(0, i + 1).join('/') + '/');
-				current.children!.set(part, fake);
+		} else {
+			for (;;) {
+				const chunk = await file.read(Chunk);
+				if (chunk.sig !== SIG.FILE_HEADER)
+					break;
+
+				const zf		= new Entry(chunk);
+				if (chunk.flags.HAS_DATADESCRIPTOR) {
+					await zf.data.get();	//wait for seek to complete before reading datadescriptor
+					const tell	= file.tell();
+					const chunk = await file.read(Chunk);
+					if (chunk.sig !== SIG.DATADESCRIPTOR)
+						file.seek(tell + 12);
+				}
+				this.entries.push(zf);
 			}
-			return current.children!.get(part)!;
-		}, this.root);
-		current.children!.set(last, entry);
-	}
-
-	find(filename: string): ZIPfile | undefined {
-		let current	= this.root;
-		if (!filename)
-			return current;
-		const parts	= filename.split('/');
-		const last	= parts.pop()!;
-		for (const part of parts) {
-			const next = current.children!.get(part);
-			if (!next || !next.children)
-				return undefined;
-			current = next;
 		}
-		return last ? current.children!.get(last) : current;
+
+		for (const entry of this.entries)
+			this.add(entry);
+
+		for (const entry of this.entries) {
+			if (entry.isSymbolicLink) {
+				const data = await entry.data.get();
+				this.fixLink(entry, bin.utils.decodeText(data));
+			}
+		}
+
+	}
+
+	async writeAll(file0: bin._stream | bin.async._stream, cd = true, cancel?: Cancellation): Promise<boolean> {
+		const file = bin.interop.stream(file0);
+		const offsets: number[] = [];
+
+		for (const zf of this.entries) {
+			// Write local header
+			const offset = file.tell();
+			offsets.push(offset);
+
+			await bin.interop.write(file, Chunk, {
+				sig: SIG.FILE_HEADER,
+				...zf,
+				filename_length:	zf.filename.length,
+				extra_length:		0,
+			});
+
+			if (cancel?.cancel)
+				return false;
+		}
+
+		if (cd) {
+			const start = file.tell();
+
+			// Write central directory
+			let i = 0;
+			for (const zf of this.entries) {
+				await file.write(Chunk, {
+					sig: SIG.CENTRALDIR_ENTRY,
+					...zf,
+					madeby:				madeBy(OS.MSDOS, Version.V2_0),
+					filename_length:	zf.filename.length,
+					extra_length:		0,
+					comment_length:		0,
+					disk_number_start:	0,
+					attributes_int:		0,
+					attributes_ext:		zf.isDirectory ? DosAttr.DIRECTORY : DosAttr.ARCHIVE,
+					offset:				offsets[i++],
+				});
+
+				if (cancel?.cancel)
+					return false;
+			}
+
+			// Write end of central directory
+			await file.write(Chunk, {
+				sig: SIG.CENTRALDIR_END,
+				disk_no:		0,
+				dir_disk:		0,
+				total_disk:		this.entries.length,
+				total_entries:	this.entries.length,
+				dir_size:		file.tell() - start,
+				dir_offset:		start,
+				comment:		'',
+			});
+		}
+		return true;
+	}
+
+	findEntry(filename: string): Entry | undefined {
+		return super.findEntry(filename);
+	}
+
+	addEntry(filename: string, data?: Uint8Array, method: METHOD = METHOD.DEFLATED) {
+		const file = Entry.make(filename, method, data);
+		this.entries.push(file);
+		this.add(file);
+		return file;
+	}
+
+	copyEntry(filename: string, data: Entry) {
+		if (data.isDirectory && !filename.endsWith('/'))
+			filename += '/';
+
+		const file = new Entry({...data, filename});
+		this.entries.push(file);
+		this.add(file);
+		return file;
 	}
 
 	*[Symbol.iterator]() {
 		for (const entry of this.entries)
 			yield entry;
-	}
-}
-
-async function compress(data: Uint8Array, method: METHOD) : Promise<Uint8Array | null> {
-	switch (method) {
-		case METHOD.NO_COMPRESSION:
-			return data;
-		case METHOD.DEFLATED:
-			return new Promise((resolve, reject) => zlib.deflateRaw(data, (err, result) => err ? reject(err) : resolve(result)));
-		default:
-			return null;
-	}
-}
-
-export class ZIPwriter {
-	private entries: ZIPfile[] = [];
-	private pending = Promise.resolve();
-
-	constructor(private file: bin._stream|bin.async._stream) {
-	}
-
-	async write(filename: string, data: Uint8Array, method: METHOD = METHOD.DEFLATED): Promise<ZIPfile | undefined> {
-		const file = this.file as bin.stream2;
-
-		const comp	= await compress(data, method);
-		if (!comp)
-			return;
-
-		// Calculate CRC
-		let crc = 0xffffffff;
-		for (const byte of data)
-			crc = CRC32_calc(crc, byte);
-		crc = (crc ^ 0xffffffff) >>> 0;
-
-		const h = {
-			filename,
-			method,
-			mtime: new Date(),
-			crc,
-			flags: {},
-			offset: this.file.tell(),
-			uncompressed_size: data.length,
-			compressed_size: comp.length,
-			extra: {id: 0},
-			data: bin.resolved(comp as Uint8Array<ArrayBuffer>),
-		};
-
-		const zf	= new ZIPfile(h);
-
-		await this.pending;
-
-		// Write local header
-		await file.write(Chunk, {
-			sig: SIG.FILE_HEADER,
-			...h,
-			offset: BigInt(h.offset),
-			version:			0x14,
-			filename_length:	filename.length,
-			extra_length:		0,
-			compressed_size:	comp.length,
-		});
-
-		this.pending = file.write_view(comp) ?? Promise.resolve();
-		this.entries.push(zf);
-		return zf;
-	}
-
-	async writeCD(): Promise<void> {
-		await this.pending;
-
-		const file = this.file as bin.stream2;
-		const start = file.tell();
-
-		// Write central directory
-		for (const zf of this.entries) {
-			const comp = new Uint8Array(0);
-
-			await file.write(Chunk, {
-				sig: SIG.CENTRALDIR_ENTRY,
-				...zf,
-				madeby:				0x315f,
-				version:			0x14,
-				filename_length:	zf.filename.length,
-				extra_length:		0,
-				comment_length:		0,
-				disk_number_start:	0,
-				attributes_int:		0,
-				attributes_ext:		0,
-				//extra:				{id: 0},
-				offset:				zf.offset!,
-				compressed_size:	comp.length,
-				data:				bin.resolved(comp),
-			});
-		}
-
-		// Write end of central directory
-		await file.write(Chunk, {
-			sig: SIG.CENTRALDIR_END,
-			disk_no:		0,
-			dir_disk:		0,
-			total_disk:		this.entries.length,
-			total_entries:	this.entries.length,
-			dir_size:		file.tell() - start,
-			dir_offset:		start,
-			comment:		'',
-		});
 	}
 }

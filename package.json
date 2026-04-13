@@ -6,13 +6,14 @@
 		"url": "git+https://github.com/adrianstephens/ts-binary-libs.git"
 	},
 	"exports": {
-		".": "./dist/common.js",
+		".": "./dist/index.js",
 		"./arch": "./dist/arch.js",
 		"./clr": "./dist/clr.js",
 		"./CompoundDocument": "./dist/CompoundDocument.js",
 		"./elf": "./dist/elf.js",
 		"./mach": "./dist/mach.js",
 		"./pe": "./dist/pe.js",
+		"./tar": "./dist/tar.js",
 		"./zip": "./dist/zip.js"
 	},
 	"files": [
@@ -45,8 +46,8 @@
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.26.0"
 	},
-	"version": "1.5.1",
+	"version": "1.6.0",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.7.2"
+		"@isopodlabs/binary": "^1.9.0"
 	}
 }

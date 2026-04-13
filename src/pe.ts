@@ -129,7 +129,7 @@ export class Section extends bin.Class({
 
 export class COFF extends bin.Class({
 	...COFF_HEADER,
-	opt: bin.Buffer('SizeOfOptionalHeader'),
+	opt: bin.Buffer('SizeOfOptionalHeader', Uint8Array),
 	sections: bin.Array('NumberOfSections', Section),
 }) {
 	static check(data: Uint8Array): boolean {

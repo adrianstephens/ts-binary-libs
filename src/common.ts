@@ -1,4 +1,45 @@
-/* eslint-disable @typescript-eslint/array-type */
+import path from 'path/posix';
+
+export interface Cancellation {
+	cancel: boolean;
+}
+
+//-----------------------------------------------------------------------------
+//	Decompression
+//-----------------------------------------------------------------------------
+
+export type Codec = (buffer: Uint8Array) => Promise<Uint8Array>;
+const compressors: Record<string, Codec> = {};
+const decompressors: Record<string, Codec> = {};
+
+async function transformWithStream(Ctor: any, format: string, buffer: Uint8Array) {
+	const stream = new Ctor(format);
+	const writer = stream.writable.getWriter();
+	writer.write(buffer);
+	writer.close();
+	return new Uint8Array(await new (globalThis as any).Response(stream.readable).arrayBuffer());
+}
+
+const supportedCodecs = ['brotli', 'deflate', 'deflate-raw', 'gzip', 'zstd'];
+
+function tryAutoConfigureCodec(name: string, ctor: any): Codec {
+	if (ctor && supportedCodecs.includes(name))
+		return buffer => transformWithStream(ctor, name, buffer);
+	return () => { throw new Error(`Decompression for ${name} is not configured for this environment`); };
+}
+
+export function configureCompression(name: string, codec: Codec) {
+	compressors[name] = codec;
+}
+export function configureDecompression(name: string, codec: Codec) {
+	decompressors[name] = codec;
+}
+export function decompress(name: string): Codec {
+	return decompressors[name] ??= tryAutoConfigureCodec(name, (globalThis as any).DecompressionStream);
+}
+export function compress(name: string): Codec {
+	return compressors[name] ??= tryAutoConfigureCodec(name, (globalThis as any).CompressionStream);
+}
 
 //-----------------------------------------------------------------------------
 //	memory utilities
@@ -21,4 +62,168 @@ export class MappedMemory {
 	slice(begin: number, end?: number)	{ return new MappedMemory(this.data.subarray(begin, end), this.address + BigInt(begin), this.flags); }
 	atRelative(begin: number, length?: number)	{ return this.slice(begin, length && (begin + length)); }
 	at(begin: bigint, length?: number)	{ return this.atRelative(Number(begin - this.address), length); }
+}
+
+
+//-----------------------------------------------------------------------------
+// File Hierarchy
+//-----------------------------------------------------------------------------
+
+export const UnixMode = {
+	USER:		0o001,
+	GROUP:		0o010,
+	OTHER:		0o100,
+	ALL:		0o111,
+	R:			4,
+	W:			2,
+	X:			1,
+	STICKY:		0o001000,
+	SGID:		0o002000,
+	SUID:		0o004000,
+	TYPEMASK:	0o170000,
+	DIRECTORY:	0o040000,
+	FILE:		0o100000,
+	SYMLINK:	0o120000,
+	PERM_644:	0o000644,
+	PERM_755:	0o000755,
+} as const;
+
+
+export interface HierarchyNode<T extends HierarchyNode<T>> {
+	filename: string;
+	children?: Map<string, T>;
+}
+
+export class Hierarchy<T extends HierarchyNode<T>> {
+	constructor(public root: T, private make: (filename: string) => T, private remove: (node: T) => void) {}
+
+	protected add(entry: T) {
+		const parts = entry.filename.split('/');
+		let last = parts.pop()!;
+		if (last === '') // directory
+			last = parts.pop()!;
+		
+		const dir = this.getFolder(parts, true);
+		if (!dir)
+			return;
+		if (!dir.children)
+			dir.children = new Map<string, T>();
+		dir.children.set(last, entry);
+	}
+
+	relative(entry: T, linkname: string) {
+		return path.normalize(path.join(path.dirname(entry.filename), linkname));
+	}
+
+	protected fixLink(entry: T, linkname: string) {
+		const target = this.relative(entry, linkname);
+		const link = this.findEntry(target);
+		if (link)
+			entry.children = link.children;
+	}
+
+	protected getFolder(parts: string[], create = false) {
+		let current: T | undefined = this.root;
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			if (!current)
+				return;
+
+			let next: T | undefined = current.children?.get(part);
+			if (!next) {
+				if (!create)
+					return;
+				next = this.make(parts.slice(0, i + 1).join('/') + '/');
+				if (!current.children)
+					current.children = new Map<string, T>();
+				current.children.set(part, next);
+			}
+			current = next;
+		}
+		return current;
+	}
+
+	findEntry(filename: string): T | undefined {
+		if (!filename)
+			return this.root;
+		const parts	= filename.split('/');
+		const last	= parts.pop()!;
+		const dir	= this.getFolder(parts, false);
+		return last ? dir?.children!.get(last) : dir;
+	}
+
+
+	deleteEntry(filename: string): boolean {
+		const parts	= filename.split('/');
+		let last = parts.pop()!;
+		if (last === '') // directory
+			last = parts.pop()!;
+
+		const dir = this.getFolder(parts, false);
+		const e = dir?.children!.get(last);
+		if (!e)
+			return false;
+
+		const recurse = (e: T) => {
+			if (e.children) {
+				e.children.forEach(v => recurse(v));
+				e.children = undefined;
+			}
+			this.remove(e);
+		};
+		dir!.children!.delete(last);
+		recurse(e);
+		return true;
+	}
+	renameEntry(oldFilename: string, newFilename: string): T | undefined {
+		const oldParts = oldFilename.split('/');
+		let oldLast = oldParts.pop()!;
+		if (oldLast === '') {
+			oldLast = oldParts.pop()!;
+			if (!newFilename.endsWith('/'))
+				newFilename += '/';
+		}
+
+		const oldDir	= this.getFolder(oldParts, false);
+		const children	= oldDir!.children!;
+		const entry		= children.get(oldLast);
+		if (!entry)
+			return;
+
+		const newParts = newFilename.split('/');
+		let newLast = newParts.pop()!;
+		if (newLast === '')
+			newLast = newParts.pop()!;
+
+		const newDir = this.getFolder(newParts, true);
+		if (newDir!.children!.has(newLast))
+			return; // collision
+
+		entry.filename = newFilename;
+
+		if (oldDir !== newDir) {
+			children.delete(oldLast);
+			newDir!.children!.set(newLast, entry);
+		} else {
+			const ordered	= Array.from(children.entries());
+			const index		= ordered.findIndex(([k]) => k === oldLast);
+			ordered[index][0] = newLast;
+			oldDir!.children = new Map(ordered);
+		}
+
+		if (entry.children) {
+			const recurse = (node: T) => {
+				const prefix = node.filename;
+				for (const [key, child] of node.children!.entries()) {
+					child.filename = prefix + key;
+					if (child.children) {
+						child.filename += '/';
+						recurse(child);
+					}
+				}
+			};
+			recurse(entry);
+		}
+		return entry;
+	}
 }

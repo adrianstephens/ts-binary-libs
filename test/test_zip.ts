@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import * as zip from '../dist/zip';
+import {zip} from '../dist/index';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
@@ -30,50 +30,58 @@ async function openWriteFile(filename: string) {
 (async () => {
 	{//async test
 		await using fileIn = await openReadFile(path.join(__dirname, 'test.zip'));
-		const zipFile = new zip.ZIPreaderCD(fileIn);
+		const zipFile = new zip.Document(fileIn);
 		await zipFile.ready;
 		console.log(`got ${zipFile.entries.length}`);
 	}
 	{
 		const data = await fs.readFile(path.join(__dirname, 'test.zip'));
 		const fileIn = new bin.stream(data);
-		const zipFile = new zip.ZIPreaderCD(fileIn);
+		const zipFile = new zip.Document(fileIn);
 		await zipFile.ready;
 		console.log(`got ${zipFile.entries.length}`);
 	}
-	/*
 	{
 		const fileIn = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip'));
-		const zipFile = new zip.ZIPreaderCD(fileIn);
-		const zf4 = zipFile.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+		const zipFile = new zip.Document(fileIn);
+		await zipFile.ready;
+		const zf4 = zipFile.findEntry("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
 		if (zf4) {
-			const data = await zf4.extract(fileIn);
+			const data = await zf4.extract();
 			console.log(`extracted ${data?.length} bytes`);
 		}
 	}
 	{
-		const fileIn = new bin.stream(await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip'));
-		const zipFile = new zip.ZIPreader(fileIn);
-		for await(const i of zipFile)
+		const data = await fs.readFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs.zip');
+		const fileIn = new bin.stream(data);
+		const zipFile = new zip.Document(fileIn, false);
+		await zipFile.ready;
+		for await(const i of zipFile) {
 			console.log(i.filename);
+			if (i.uncompressed_size) {
+				console.log(`  compressed: ${i.compressed_size} bytes`);
+				const data = await i.extract();
+				console.log(`  extracted ${data?.length} bytes`);
+			}
+		}
 	}
 	{
 		const file = new bin.stream(await fs.readFile('C:\\ProgramData\\IDrive.zip'));
 		const time = Date.now();
-		const zipFile = new zip.ZIPreaderCD(file);
+		const zipFile = new zip.Document(file);
 		const duration = Date.now() - time;
 		console.log(`got ${zipFile.entries.length} in ${duration}ms`);
 	}
 	{
 		await using file = await openReadFile('C:\\ProgramData\\IDrive.zip');
 		const time = Date.now();
-		const zipFile = new zip.ZIPreaderCD(file);
+		const zipFile = new zip.Document(file);
 		await zipFile.ready;
 		const duration = Date.now() - time;
 		console.log(`got ${zipFile.entries.length} in ${duration}ms`);
 		for (const zf of zipFile) {
 			console.log(zf.filename);
-			const data = await zf.extract(file);
+			const data = await zf.extract();
 			if (data) {
 				console.log(`  compressed: ${zf.compressed_size} bytes`);
 				console.log(`  uncompressed: ${data.length} bytes`);
@@ -88,47 +96,48 @@ async function openWriteFile(filename: string) {
 		await using fileOut = await openWriteFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
 		using fileOutSync = new bin.growingStream();
 
-		const zipIn			= new zip.ZIPreaderCD(fileIn);
-		const zipOut		= new zip.ZIPwriter(fileOut);
-		const zipOutSync	= new zip.ZIPwriter(fileOutSync);
+		const zipIn			= new zip.Document(fileIn);
+		const zipOut		= new zip.Document();
+		const zipOutSync	= new zip.Document();
 		await zipIn.ready;
 
-		const zf0 = zipIn.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
-		const data0 = await zf0?.extract(fileIn);
+		const zf0 = zipIn.findEntry("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+		const data0 = await zf0?.extract();
 
 		console.log(`got ${zipIn.entries.length}`);
 		for (const zf of zipIn) {
 			console.log(zf.filename);
-			const data = await zf.extract(fileIn);
+			const data = await zf.extract();
 			if (data) {
 				console.log(`  compressed: ${zf.compressed_size} bytes`);
 				console.log(`  uncompressed: ${data.length} bytes`);
 				zf.check(data);
-				const zf2 = await zipOut.write(zf.filename, data, zf.method);
-				const _zf3 = await zipOutSync.write(zf.filename, data, zf.method);
+				const zf2 = await zipOut.addEntry(zf.filename, data, zf.method);
+				const _zf3 = await zipOutSync.addEntry(zf.filename, data, zf.method);
 				console.log(`  recompressed: ${zf2?.compressed_size} bytes`);
 			} else {
 				console.log('  no data');
 			}
 		}
-		await zipOut.writeCD();
-		await zipOutSync.writeCD();
+		await zipOut.writeAll(fileOut);
+		await zipOutSync.writeAll(fileOutSync);
 
 		const _dataSync = fileOutSync.terminate();
 
 
 		{
 			await using file3 = await openReadFile('D:\\dev\\ActionFace\\AF_Batch\\AF_Figs2.zip');
-			const zipFile3	= new zip.ZIPreaderCD(file3);
+			const zipFile3	= new zip.Document(file3);
 			await zipFile3.ready;
-			const zf = zipFile3.find("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
+			const zf = zipFile3.findEntry("AF_Figs/textures/Baseball_Boy_Generic_Low.jpg");
 			if (zf) {
-				const data = await zf.extract(file3);
+				const data = await zf.extract();
 				console.log(`extracted ${data?.length} bytes`);
 				if (data0 && data)
 					console.log(`data matches: ${data0.length === data?.length && data0.every((v, i) => v === data[i])}`);
 			}
 		}
 	}
-	*/
-})();
+})().catch(e => 
+	console.error(e)
+);
