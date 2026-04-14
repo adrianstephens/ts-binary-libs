@@ -68,8 +68,11 @@ function madeBy(os: number, ver: number) {
 
 const time_bits = bin.utils.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
 const ZipTime = bin.as(bin.UINT32_LE,
-	x => { const t = time_bits.to(x); return new Date(t.years1980 + 1980, t.month, t.day, t.hour, t.minute, t.seconds2 * 2);},
-	t => time_bits.from({years1980: t.getFullYear() - 1980, month: t.getMonth(), day: t.getDate(), hour: t.getHours(), minute: t.getMinutes(), seconds2: t.getSeconds() >> 1})
+	x => {
+		const t = time_bits.to(x);
+		return new Date(t.years1980 + 1980, Math.max(0, t.month - 1), Math.max(1, t.day), t.hour, t.minute, t.seconds2 * 2);
+	},
+	t => time_bits.from({years1980: t.getFullYear() - 1980, month: t.getMonth() + 1, day: t.getDate(), hour: t.getHours(), minute: t.getMinutes(), seconds2: t.getSeconds() >> 1})
 );
 
 const UnixTime = bin.as(bin.UINT32_LE,
@@ -219,7 +222,8 @@ const Chunk = {
 			total_entries: 		bin.UINT16_LE,
 			dir_size:			bin.UINT32_LE,
 			dir_offset:			bin.UINT32_LE,
-			comment:			bin.RemainingString()
+			comment_length:		bin.UINT16_LE,
+			comment:			bin.String('comment_length')
 		},
 		[SIG.CENTRALDIR_PTR64]:	{
 			disk:				bin.UINT32_LE,
@@ -281,7 +285,7 @@ type ZIPheader = Pick<bin.ReadType<typeof file_header>,
 };
 
 function makeExtra(_v: any) {
-	const v = _v as ZIPheader;
+	const v = _v as ZIPheader;// & {compressed_size: number|bigint};
 	const extra: any[] = [];
 
 	if (v.uncompressed_size >= 0xffffffff || v.compressed_size >= 0xffffffff || (v.offset && v.offset >= 0xffffffff))
@@ -293,7 +297,7 @@ function makeExtra(_v: any) {
 		v.offset = fix32(v.offset);
 
 	if (v.atime || v.ctime || v.mtime.getSeconds() % 2)
-		extra.push({id: EXTENSION.EXTENDED_TIMESTAMP, flags: 1, mtime: v.mtime, atime: v.atime, ctime: v.ctime});
+		extra.push({id: EXTENSION.EXTENDED_TIMESTAMP, xflags: 1, mtime: v.mtime, atime: v.atime, ctime: v.ctime});
 
 	if (v.uid || v.gid)
 		extra.push({id: EXTENSION.UNIX_UID_GID, uid: v.uid, gid: v.gid});
@@ -310,7 +314,6 @@ export class Entry {
 	filename:			string;
 	children?:			Map<string, Entry>;
 
-	compressed_size:	number;
 	uncompressed_size:	number;
 	version:			number;
 	flags:				ZIPheader['flags'];
@@ -322,11 +325,11 @@ export class Entry {
 	ctime?:				Date;
 	attributes?:		number;
 	data:				bin.DeferedType<Uint8Array>;
+	compressed_size:	Promise<number | bigint>;
 
 	constructor(h: ZIPheader) {
 		this.filename			= h.filename;
 		this.uncompressed_size	= Number(h.uncompressed_size);
-		this.compressed_size	= Number(h.compressed_size);
 		this.version			= h.version;
 		this.flags				= h.flags;
 		this.method				= h.method;
@@ -335,6 +338,7 @@ export class Entry {
 		this.comment			= h.comment ?? '';
 		this.data				= h.data;
 		this.attributes			= h.attributes_ext;
+		this.compressed_size	= h.compressed_size < 0 ? (async () => (await h.data.get()).length)() : Promise.resolve(h.compressed_size);
 
 		if (this.filename.endsWith('/'))
 			this.children = new Map<string, Entry>();
@@ -407,6 +411,7 @@ export class Entry {
 		this.uncompressed_size	= data.length;
 		this.crc				= CRC32.buffer(data);
 		this.data				= bin.resolved(compressed);
+		this.compressed_size	= compressed.then(c => c.length);
 	}
 
 	static make(filename: string, method: METHOD = METHOD.NO_COMPRESSION, data?: Uint8Array): Entry {
@@ -416,8 +421,8 @@ export class Entry {
 			version:			0x14,
 			flags:				{},
 			crc:				0,
-			uncompressed_size:	0,
 			compressed_size:	0,
+			uncompressed_size:	0,
 			mtime:				new Date(),
 			data:				bin.resolved(new Uint8Array()),
 		});
@@ -510,15 +515,20 @@ export class Document extends Hierarchy<Entry> {
 				if (chunk.sig !== SIG.FILE_HEADER)
 					break;
 
-				const zf		= new Entry(chunk);
-				if (chunk.flags.HAS_DATADESCRIPTOR) {
-					await zf.data.get();	//wait for seek to complete before reading datadescriptor
-					const tell	= file.tell();
-					const chunk = await file.read(Chunk);
-					if (chunk.sig !== SIG.DATADESCRIPTOR)
-						file.seek(tell + 12);
+				try {
+					const zf		= new Entry(chunk);
+					if (chunk.flags.HAS_DATADESCRIPTOR) {
+						await zf.data.get();	//wait for seek to complete before reading datadescriptor
+						const tell	= file.tell();
+						const chunk = await file.read(Chunk);
+						if (chunk.sig !== SIG.DATADESCRIPTOR)
+							file.seek(tell + 12);
+					}
+					this.entries.push(zf);
+				} catch (e) {
+					console.error('Error reading file header', e);
+					break;
 				}
-				this.entries.push(zf);
 			}
 		}
 
@@ -538,14 +548,15 @@ export class Document extends Hierarchy<Entry> {
 		const file = bin.interop.stream(file0);
 		const offsets: number[] = [];
 
+		// Write local headers and file data
 		for (const zf of this.entries) {
-			// Write local header
 			const offset = file.tell();
 			offsets.push(offset);
 
-			await bin.interop.write(file, Chunk, {
+			await file.write(Chunk, {
 				sig: SIG.FILE_HEADER,
 				...zf,
+				compressed_size:	await zf.compressed_size,
 				filename_length:	zf.filename.length,
 				extra_length:		0,
 			});
@@ -563,6 +574,7 @@ export class Document extends Hierarchy<Entry> {
 				await file.write(Chunk, {
 					sig: SIG.CENTRALDIR_ENTRY,
 					...zf,
+					compressed_size:	await zf.compressed_size,
 					madeby:				madeBy(OS.MSDOS, Version.V2_0),
 					filename_length:	zf.filename.length,
 					extra_length:		0,
@@ -586,6 +598,7 @@ export class Document extends Hierarchy<Entry> {
 				total_entries:	this.entries.length,
 				dir_size:		file.tell() - start,
 				dir_offset:		start,
+				comment_length:	0,
 				comment:		'',
 			});
 		}
@@ -607,7 +620,7 @@ export class Document extends Hierarchy<Entry> {
 		if (data.isDirectory && !filename.endsWith('/'))
 			filename += '/';
 
-		const file = new Entry({...data, filename});
+		const file = new Entry({...data, compressed_size: -1, filename});
 		this.entries.push(file);
 		this.add(file);
 		return file;
