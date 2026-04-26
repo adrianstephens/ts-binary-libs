@@ -47,8 +47,8 @@
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.26.0"
 	},
-	"version": "1.7.0",
+	"version": "1.8.0",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.9.1"
+		"@isopodlabs/binary": "^1.10.2"
 	}
 }

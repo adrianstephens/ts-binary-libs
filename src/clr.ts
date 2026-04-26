@@ -27,7 +27,7 @@ const CLR_HEADER = {
 	MajorRuntimeVersion:		bin.UINT16_LE,
 	MinorRuntimeVersion:		bin.UINT16_LE,
 	MetaData:					pe.DATA_DIRECTORY,
-	Flags:						bin.asFlags(bin.UINT32_LE, CLR_FLAGS),
+	Flags:						bin.as(bin.UINT32_LE, bin.Flags(CLR_FLAGS)),
 	EntryPoint:					bin.UINT32_LE,
 	Resources:					pe.DATA_DIRECTORY,
 	StrongNameSignature:		pe.DATA_DIRECTORY,

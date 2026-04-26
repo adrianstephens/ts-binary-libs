@@ -41,7 +41,7 @@ const MACHINES: Record<string, number> = {
 	THUMB:		0x1c2,
 	WCEMIPSV2:	0x169,
 };
-const MACHINE = bin.asEnum(uint16, MACHINES);
+const MACHINE = bin.as(uint16, bin.EnumString( MACHINES));
 
 const COFF_HEADER = {
 	Machine:				MACHINE,
@@ -108,7 +108,7 @@ export class Section extends bin.Class({
 	PointerToLinenumbers:	bin.asHex(uint32),
 	NumberOfRelocations:	bin.INT16_LE,
 	NumberOfLinenumbers:	bin.INT16_LE,
-	Characteristics:		bin.asFlags(uint32, SECTION_CHARACTERISTICS)
+	Characteristics:		bin.as(uint32, bin.Flags(SECTION_CHARACTERISTICS))
 }) {
 	data?: MappedMemory;
 	constructor(r: bin.stream) {
@@ -257,7 +257,7 @@ const DLLCHARACTERISTICS = {
 };
 
 const OPTIONAL_HEADER = {
-	Magic:						bin.asEnum(uint16, MAGIC),
+	Magic:						bin.as(uint16, bin.EnumString( MAGIC)),
 	MajorLinkerVersion:			bin.UINT8,
 	MinorLinkerVersion:			bin.UINT8,
 	SizeOfCode:					uint32,
@@ -282,7 +282,7 @@ const OPTIONAL_HEADER = {
 			SizeOfHeaders:  			uint32,
 			CheckSum:   				uint32,
 			Subsystem:  				uint16,
-			DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
+			DllCharacteristics: 		bin.as(uint16, bin.Flags(DLLCHARACTERISTICS)),
 			SizeOfStackReserve: 		uint32,
 			SizeOfStackCommit:  		uint32,
 			SizeOfHeapReserve:  		uint32,
@@ -305,7 +305,7 @@ const OPTIONAL_HEADER = {
 			SizeOfHeaders:  			uint32,
 			CheckSum:   				uint32,
 			Subsystem:  				uint16,
-			DllCharacteristics: 		bin.asFlags(uint16, DLLCHARACTERISTICS),
+			DllCharacteristics: 		bin.as(uint16, bin.Flags(DLLCHARACTERISTICS)),
 			SizeOfStackReserve: 		uint64,
 			SizeOfStackCommit:  		uint64,
 			SizeOfHeapReserve:  		uint64,

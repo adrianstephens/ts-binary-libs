@@ -1,17 +1,17 @@
 import * as bin from '@isopodlabs/binary';
-import {Cancellation, compress, decompress, Hierarchy, UnixMode} from './common';
+import {Cancellation, Hierarchy, UnixMode} from './common';
 
 const FLAGS = {
-	NONE:					0,
-	ENCRYPTION:				1 << 0,
-	OPTION1: 				1 << 1,
-	OPTION2: 				1 << 2,
-	HAS_DATADESCRIPTOR:		1 << 3,
-	ENHANCED_DEFLATION:		1 << 4,
-	COMPRESSED_PATCHED_DATA:1 << 5,
-	STRONG_ENCRYPTION:		1 << 6,
-	LANGUAGE_ENCODING:		1 << 11,
-	MASK_HEADER_VALUES:		1 << 13,
+//	NONE:					0,
+	ENCRYPTION:				1,		//1 << 0,
+	OPTION1: 				2,		//1 << 1,
+	OPTION2: 				4,		//1 << 2,
+	HAS_DATADESCRIPTOR:		8,		//1 << 3,
+	ENHANCED_DEFLATION:		16,		//1 << 4,
+	COMPRESSED_PATCHED_DATA:32,		//1 << 5,
+	STRONG_ENCRYPTION:		64,		//1 << 6,
+	LANGUAGE_ENCODING:		2048,	//1 << 11,
+	MASK_HEADER_VALUES:		8192,	//1 << 13,
 } as const;
 
 export const METHOD = {
@@ -62,8 +62,8 @@ export const DosAttr = {
 	ARCHIVE:	0x20,
 } as const;
 
-function madeBy(os: number, ver: number) {
-	return {ver, os};
+function madeBy(os: typeof OS[keyof typeof OS], ver: typeof Version[keyof typeof Version]) {
+	return {ver: bin.Enum(Version)(ver), os: bin.Enum(OS)(os)};
 }
 
 const time_bits = bin.utils.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
@@ -140,8 +140,6 @@ const extra = bin.Size('extra_length', bin.RemainingRepeat({
 	})))
 }, (s, _v) => makeExtra(s.obj)));
 
-type extra = bin.ReadType<typeof extra>;
-
 const SIG = {
 	PK:					0x4b50,
 	FILE_HEADER:		0x04034b50,
@@ -182,7 +180,7 @@ const file_header = {
 	),
 };
 
-const MadeBy = {ver: bin.UINT8, os: bin.asEnum2(bin.UINT8, OS)};
+const MadeBy = {ver: bin.as(bin.UINT8, bin.Enum(Version)), os: bin.as(bin.UINT8, bin.Enum(OS))};
 
 const Chunk = {
 	sig:	bin.UINT32_LE,
@@ -359,7 +357,7 @@ export class Entry {
 				break;
 			case METHOD.DEFLATED:
 				try {
-					data = await decompress('deflate-raw')(data);
+					data = await bin.decompress('deflate-raw')(data);
 				} catch (e) {
 					console.error('Decompression failed', e);
 				}
@@ -401,7 +399,7 @@ export class Entry {
 				compressed = Promise.resolve(data);
 				break;
 			case METHOD.DEFLATED:
-				compressed = compress('deflate-raw')(data);
+				compressed = bin.compress('deflate-raw')(data);
 				break;
 			default:
 				throw new Error(`Unsupported compression method: ${this.method}`);
@@ -547,6 +545,7 @@ export class Document extends Hierarchy<Entry> {
 	async writeAll(file0: bin._stream | bin.async._stream, cd = true, cancel?: Cancellation): Promise<boolean> {
 		const file = bin.interop.stream(file0);
 		const offsets: number[] = [];
+		const fix32 = (value: number | bigint) => Number(value >= 0xffffffffn ? 0xffffffffn : value);
 
 		// Write local headers and file data
 		for (const zf of this.entries) {
@@ -556,7 +555,7 @@ export class Document extends Hierarchy<Entry> {
 			await file.write(Chunk, {
 				sig: SIG.FILE_HEADER,
 				...zf,
-				compressed_size:	await zf.compressed_size,
+				compressed_size:	fix32(await zf.compressed_size),
 				filename_length:	zf.filename.length,
 				extra_length:		0,
 			});
@@ -574,7 +573,7 @@ export class Document extends Hierarchy<Entry> {
 				await file.write(Chunk, {
 					sig: SIG.CENTRALDIR_ENTRY,
 					...zf,
-					compressed_size:	await zf.compressed_size,
+				compressed_size:	fix32(await zf.compressed_size),
 					madeby:				madeBy(OS.MSDOS, Version.V2_0),
 					filename_length:	zf.filename.length,
 					extra_length:		0,

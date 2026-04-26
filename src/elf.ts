@@ -24,12 +24,12 @@ const OSABI = {
 const Ident = {
 	//enum {MAGIC = '\177ELF'};
 	magic:		bin.UINT32_LE,
-	file_class:	bin.asEnum(bin.UINT8, CLASS),
-	encoding:	bin.asEnum(bin.UINT8, DATA),
+	file_class:	bin.as(bin.UINT8, bin.EnumString(CLASS)),
+	encoding:	bin.as(bin.UINT8, bin.EnumString(DATA)),
 	version:	bin.UINT8,
 	_: bin.If(s => s.obj.file_class === 'CLASS64', {
 		//64 bit only
-		osabi: 		bin.asEnum(bin.UINT8, OSABI),
+		osabi: 		bin.as(bin.UINT8, bin.EnumString(OSABI)),
 		abiversion: bin.UINT8,
 		pad:		bin.Array(7, bin.UINT8),
 	})
@@ -230,7 +230,7 @@ const SHF = {
 //--------------------	SYMBOLS
 
 const ST_INFO = bin.utils.BitFields(8, {
-	type:		bin.BitField(4, bin.Enum({
+	type:		bin.BitField(4, bin.EnumString({
 		NOTYPE:		0,				//The symbol's type is not specified
 		OBJECT:		1,				//associated with a data object
 		FUNC:		2,				//associated with a function
@@ -241,7 +241,7 @@ const ST_INFO = bin.utils.BitFields(8, {
 		LOPROC:		13,
 		HIPROC:		15,
 	})),
-	binding:	bin.BitField(4, bin.Enum({
+	binding:	bin.BitField(4, bin.EnumString({
 		LOCAL:		0,				//not visible outside the object file containing their definition
 		GLOBAL:		1,				//visible to all object files being combined
 		WEAK:		2,				//like global symbols, but lower precedence
@@ -253,7 +253,7 @@ const ST_INFO = bin.utils.BitFields(8, {
 });
 
 const ST_OTHER = bin.utils.BitFields(8, {
-	visibility:	bin.BitField(2, bin.Enum({
+	visibility:	bin.BitField(2, bin.EnumString({
 		DEFAULT:	0,
 		HIDDEN:		1,
 		PROTECTED:	2,
@@ -655,9 +655,9 @@ export class ELFFile {
 		const	PairHalf= bin.UINT(bits == 32 ? 8 : 32, be);
 
 		const Ehdr = {
-			e_type:			bin.asEnum(Half, ET),		//Object file type (ET_..)
-			e_machine:		bin.asEnum(Half, EM),		//specifies the required architecture (EM_...)
-			e_version:		bin.asEnum(Word, EV),		//object file version (EV_...)
+			e_type:			bin.as(Half, bin.EnumString( ET)),		//Object file type (ET_..)
+			e_machine:		bin.as(Half, bin.EnumString( EM)),		//specifies the required architecture (EM_...)
+			e_version:		bin.as(Word, bin.EnumString( EV)),		//object file version (EV_...)
 			e_entry:		Addr,		//run address
 			e_phoff:		Off,		//program header table's file offset
 			e_shoff:		Off,		//section header table's file offset
@@ -671,17 +671,17 @@ export class ELFFile {
 		};
 
 		class Phdr extends bin.ReadClass(bits == 32 ? {
-			p_type:			bin.asEnum(Word, PT),		//kind of segment this array element describes
+			p_type:			bin.as(Word, bin.EnumString( PT)),		//kind of segment this array element describes
 			p_offset:		Off,		//offset from the beginning of the file at which the first byte of the segment resides
 			p_vaddr:		Addr,		//virtual address at which the first byte of the segment resides in memory
 			p_paddr:		Addr,		//segment's physical address (when relevant)
 			p_filesz:		Word,		//number of bytes in the file image of the segment
 			p_memsz:		Word,		//number of bytes in the memory image of the segment
-			p_flags:		bin.asFlags(Word, PF),
+			p_flags:		bin.as(Word, bin.Flags(PF)),
 			p_align:		Word,
 		} : {	
-			p_type:			bin.asEnum(Word, PT),
-			p_flags:		bin.asFlags(Word, PF),
+			p_type:			bin.as(Word, bin.EnumString( PT)),
+			p_flags:		bin.as(Word, bin.Flags(PF)),
 			p_offset:		Off,
 			p_vaddr:		Addr,
 			p_paddr:		Addr,
@@ -702,7 +702,7 @@ export class ELFFile {
 
 		class Shdr extends bin.ReadClass({
 			sh_name:		Word,		//name of the section
-			sh_type:		bin.asEnum(Word, SHT),		//categorizes the section's contents and semantics
+			sh_type:		bin.as(Word, bin.EnumString( SHT)),		//categorizes the section's contents and semantics
 			sh_flags:		bin.as(Xword, bin.Flags(SHF)),		//miscellaneous attributes
 			sh_addr:		Addr,		//address
 			sh_offset:		Off,		//file offset to first byte in section
@@ -740,12 +740,12 @@ export class ELFFile {
 		this.sections	= sh.map(i => [bin.utils.decodeTextTo0(shnames.subarray(i.sh_name), 'utf8'), i] as [string, typeof i]);
 
 		const Dyn = {
-			d_tag:	bin.asEnum(Sword, DT_TAG),
+			d_tag:	bin.as(Sword, bin.EnumString( DT_TAG)),
 			d_val:	Xword,
 		};
 		const Rel = {
 			r_offset:	Addr,
-			r_info:		Pair(bin.asEnum(PairHalf, RELOC[h.e_machine as keyof typeof RELOC]), PairHalf, be),
+			r_info:		Pair(bin.as(PairHalf, bin.EnumString( RELOC[h.e_machine as keyof typeof RELOC])), PairHalf, be),
 		};
 		const Rela =  {
 			...Rel,
@@ -763,11 +763,11 @@ export class ELFFile {
 				st_size:	Word,			//associated size
 				st_info:	bin.as(bin.UINT8, ST_INFO),	//symbol's type and binding attributes
 				st_other:	bin.as(bin.UINT8, ST_OTHER),
-				st_shndx:	bin.asEnum(Half, SHN),			//section header table index
+				st_shndx:	bin.as(Half, bin.EnumString( SHN)),			//section header table index
 			}: {
 				st_info:	bin.as(bin.UINT8, ST_INFO),
 				st_other:	bin.as(bin.UINT8, ST_OTHER),
-				st_shndx:	bin.asEnum(Half, SHN),
+				st_shndx:	bin.as(Half, bin.EnumString( SHN)),
 				st_value:	Addr,
 				st_size:	Off,
 			})

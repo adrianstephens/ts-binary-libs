@@ -266,9 +266,9 @@ const prop_t = bin.BitFields({
 	scoped:			1,
 	hasuniquename:	1,
 	sealed:			1,
-	hfa:			bin.BitField(2, bin.Enum({none: 0, float: 1, double: 2, other:3})),
+	hfa:			bin.BitField(2, bin.EnumString({none: 0, float: 1, double: 2, other:3})),
 	intrinsic:		1,
-	mocom:			bin.BitField(2, bin.Enum({NONAME: 0, ref: 1, Value: 2, 'interface':3})),
+	mocom:			bin.BitField(2, bin.EnumString({NONAME: 0, ref: 1, Value: 2, 'interface':3})),
 });
 
 // Field attribute structure
@@ -351,8 +351,8 @@ enum pmtype_e {
 
 const Pointer_16t = {
 	attr: bin.as(uint32, bin.utils.BitFields(32, {
-		ptrtype:	bin.BitField(5, bin.Enum(ptrtype_e)),
-		ptrmode:	bin.BitField(3, bin.Enum(ptrmode_e)),
+		ptrtype:	bin.BitField(5, bin.EnumString(ptrtype_e)),
+		ptrmode:	bin.BitField(3, bin.EnumString(ptrmode_e)),
 		isflat32: 	1,
 		isvolatile:	1,
 		isconst:	1,
@@ -370,7 +370,7 @@ const Pointer_16t = {
 	}/*, binary.Switch((s: binary._stream) => s.obj.attr.ptrmode, {
 		PTR_MODE_PMEM: {
 			pmclass:	type16_t,	// index of containing class for pointer to member
-			pmenum:		binary.asEnum(uint16, pmtype_e),		// enumeration specifying pm format (pmtype_e)
+			pmenum:		binary.as(uint16, bin.EnumString( pmtype_e),		// enumeration specifying pm format (pmtype_e)
 		}
 	})*/)
 };
@@ -378,8 +378,8 @@ const Pointer_16t = {
 const Pointer = {
 	utype: type_t,
 	attr: bin.as(uint32, bin.utils.BitFields(32, {
-		ptrtype:	bin.BitField(5, bin.Enum(ptrtype_e)),
-		ptrmode:	bin.BitField(3, bin.Enum(ptrmode_e)),
+		ptrtype:	bin.BitField(5, bin.EnumString(ptrtype_e)),
+		ptrmode:	bin.BitField(3, bin.EnumString(ptrmode_e)),
 		isflat32: 1,
 		isvolatile: 1,
 		isconst: 1,
@@ -401,7 +401,7 @@ const Pointer = {
 	}/*, binary.Switch((s: binary._stream) => s.obj.attr.ptrmode, {
 		PTR_MODE_PMEM: {
 			pmclass:	type16_t,	// index of containing class for pointer to member
-			pmenum:		binary.asEnum(uint16, pmtype_e),		// enumeration specifying pm format (pmtype_e)
+			pmenum:		binary.as(uint16, bin.EnumString( pmtype_e),		// enumeration specifying pm format (pmtype_e)
 		}
 	})*/)
 };
@@ -893,7 +893,7 @@ enum SYM_ENUM_e {
 // Base symbol structure
 const SYMTYPE = {
 	reclen: uint16,
-	rectyp: bin.asEnum(uint16, SYM_ENUM_e),
+	rectyp: bin.as(uint16, bin.EnumString( SYM_ENUM_e)),
 	data: bin.Size(field('reclen'), bin.Switch(field('rectype'), {
 		// Register symbol
 		S_REGSYM: {

@@ -310,7 +310,7 @@ export const PIDSI = {
 const PropertySection = {
 	cbSection:		bin.UINT32_LE,								// Section byte size
 	properties:		bin.as(bin.Array(bin.UINT32_LE, [
-		bin.asEnum(bin.UINT32_LE, PIDSI),
+		bin.as(bin.UINT32_LE, bin.EnumString( PIDSI)),
 		bin.Offset(bin.UINT32_LE, Variant(bin.UINT32_LE))
 	]), i => Object.fromEntries(i))
 };

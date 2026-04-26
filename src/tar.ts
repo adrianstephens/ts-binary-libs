@@ -1,5 +1,5 @@
 import * as bin from '@isopodlabs/binary';
-import {decompress, compress, Hierarchy, Cancellation} from './common';
+import {Hierarchy, Cancellation, UnixMode} from './common';
 
 function Octal(n: number) {
 	return bin.as(bin.String(n),
@@ -44,22 +44,32 @@ const TypeFlag = {
 type TypeFlag = typeof TypeFlag[keyof typeof TypeFlag];
 
 const TarHeader = bin.Aligned(512, {
-	name: 		TrimNull(100),
-	mode: 		Octal(8),
-	uid: 		Octal(8),
-	gid: 		Octal(8),
-	size: 		Octal(12),
-	mtime: 		bin.as(Octal(12), n => new Date(n * 1000), d => d.getTime() / 1000),
-	checksum: 	Octal(8),
-	typeflag: 	bin.String(1),
-	linkpath: 	TrimNull(100),
-	magic: 		TrimNull(6),// "ustar\0"
-	version: 	TrimNull(2),
-	uname: 		TrimNull(32),
-	gname: 		TrimNull(32),
-	devmajor: 	Octal(8),
-	devminor: 	Octal(8),
-	prefix: 	TrimNull(155),
+/*0*/	name: 		TrimNull(100),
+/*100*/	mode: 		bin.as(Octal(8), bin.FlagsV(UnixMode)),
+/*108*/	uid: 		Octal(8),
+/*116*/	gid: 		Octal(8),
+/*124*/	size: 		Octal(12),
+/*136*/	mtime: 		bin.as(Octal(12), n => new Date(n * 1000), d => d.getTime() / 1000),
+/*148*/	checksum: 	Octal(8),
+/*156*/	typeflag: 	bin.String(1),
+/*157*/	linkpath: 	TrimNull(100),
+/*257*/	magic: 		TrimNull(6),// "ustar\0"
+/*263*/	version: 	TrimNull(2),
+/*265*/	uname: 		TrimNull(32),
+/*297*/	gname: 		TrimNull(32),
+/*329*/	devmajor: 	Octal(8),
+/*337*/	devminor: 	Octal(8),
+	_: bin.If(s => s.obj.typeflag === TypeFlag.GNU_SPARSE, {
+/*345*/		prefix: 	TrimNull(41),
+/*386*/		sparsemap:	bin.Array(4, {
+				offset:		Octal(12),
+				numbytes:	Octal(12),
+			}),
+/*482*/		unknown:	bin.UINT8,
+/*483*/		realSize:	Octal(12),
+	}, {
+/*345*/		prefix: 	TrimNull(155),
+	}),
 	pad: 		bin.Aligned(512, bin.Const(undefined)),
 	data:		bin.Buffer('size'),
 });
@@ -69,7 +79,7 @@ export type TarHeader = bin.ReadType<typeof TarHeader>;
 function makeHeader(partial: Partial<TarHeader> & Required<Pick<TarHeader, 'name' | 'typeflag' | 'data'>>): TarHeader {
 	const h = {
 		size:		partial.data.length,
-		mode:    	0,
+		mode:    	UnixMode.NONE,
 		uid:     	0,
 		gid:     	0,
 		mtime:		new Date(0),
@@ -82,6 +92,7 @@ function makeHeader(partial: Partial<TarHeader> & Required<Pick<TarHeader, 'name
 		devmajor:	0,
 		devminor:	0,
 		prefix:  	'',
+
 		...partial,
 	};
 	h.checksum = getChecksum(h);
@@ -144,6 +155,18 @@ function parsePax(pax: Record<string, string>, data: Uint8Array) {
 	return pax;
 }
 
+function parseSparseMap(mapText: string) {
+	const parts = mapText.trim().split(',');
+	const sparseMap: {offset: number, numbytes: number}[] = [];
+	for (let i = 0; i + 1 < parts.length; i += 2) {
+		const offset	= Number(parts[i]);
+		const numbytes	= Number(parts[i + 1]);
+		if (Number.isFinite(offset) && Number.isFinite(numbytes) && numbytes > 0)
+			sparseMap.push({offset, numbytes});
+	}
+	return sparseMap;
+}
+
 function makePax(pax: Record<string, string>, h: TarHeader, filename: string) {
 	h.prefix		= '';
 	if (filename.length <= 100) {
@@ -174,7 +197,7 @@ function makePax(pax: Record<string, string>, h: TarHeader, filename: string) {
 		gname: 		32,
 	} as const satisfies Partial<Record<keyof TarHeader, number>>;
 
-	for (const key of Object.keys(fields) as Array<keyof typeof fields>) {
+	for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
 		const val	= h[key];
 		const max	= fields[key];
 		if (typeof val === 'number'
@@ -211,6 +234,18 @@ export class Entry extends bin.Class(TarHeader) {
 	}
 
 	async extract(): Promise<Uint8Array | null> {
+		const sparsemap = this.extra['GNU.sparse.map'];
+		if (sparsemap) {
+			const map = parseSparseMap(sparsemap);
+			const size = this.extra['GNU.sparse.realsize'] ?? this.extra['GNU.sparse.size'] ?? this.size;
+			const result = new Uint8Array(+size);
+			let dataOffset = 0;
+			for (const {offset, numbytes} of map) {
+				result.set(this.data.subarray(dataOffset, dataOffset + numbytes), offset);
+				dataOffset += numbytes;
+			}
+			return result;
+		}
 		return this.data;
 	}
 	set(data: Uint8Array) {
@@ -313,14 +348,20 @@ export class Document extends Hierarchy<Entry> {
 						pax.linkpath = TrimNull0(bin.utils.decodeText(h.data));
 						continue;
 
+					case TypeFlag.GNU_SPARSE:
+						pax['GNU.sparse.map']		= h.sparsemap!.map(({offset, numbytes}) => `${offset},${numbytes}`).join(',');
+						pax['GNU.sparse.realsize']	= h.realSize!.toString();
+
+					//fallthrough
 					default: {
-						const combined = {...globalPax, ...pax}
+						const combined = {...globalPax, ...pax};
 						for (const key in combined) {
 							if (key in h) {
 								switch (typeof (h as any)[key]) {
 									case 'string':
 										(h as any)[key] = combined[key];
 										break;
+										
 									case 'number': {
 										const n = Number(combined[key]);
 										if (Number.isFinite(n) && Number.isInteger(n))
@@ -497,12 +538,12 @@ export class Document extends Hierarchy<Entry> {
 	}
 
 	static async loadTGZ(data: Uint8Array) {
-		return new this(new bin.stream(await decompress('gzip')(data)));
+		return new this(new bin.stream(await bin.decompress('gzip')(data)));
 	}
 
 	async saveTGZ(cancel?: Cancellation) {
 		const out = new bin.growingStream();
 		if (await this.writeAll(out, cancel))
-			return compress('gzip')(out.terminate());
+			return bin.compress('gzip')(out.terminate());
 	}
 }

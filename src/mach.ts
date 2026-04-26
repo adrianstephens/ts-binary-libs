@@ -60,7 +60,7 @@ enum CPU_TYPE {
 	ARM_64		= ARM 		| ARCH_64,
 };
 
-const CPU_SUBTYPES: {[K in CPU_TYPE]?: any} = {
+const CPU_SUBTYPES: {[K in CPU_TYPE]?: Record<string, number>} = {
 	[CPU_TYPE.VAX]			: {
 		VAX_ALL:		0,
 		VAX780:			1,
@@ -219,17 +219,17 @@ const HEADER_FLAGS = {
 
 const header = {
 	magic:		uint32,			// mach magic number identifier
-	cputype:	bin.as(uint32, bin.Enum(CPU_TYPE)),
-	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
-	filetype:	bin.as(uint32, bin.Enum(FILETYPE)),
+	cputype:	bin.as(uint32, bin.EnumString(CPU_TYPE)),
+	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.EnumString(CPU_SUBTYPE)),
+	filetype:	bin.as(uint32, bin.EnumString(FILETYPE)),
 	ncmds:		uint32,			// number of load commands
 	sizeofcmds:	uint32,			// the size of all the load commands
 	flags:		bin.as(uint32, bin.Flags(HEADER_FLAGS, true))
 };
 
 const fat_arch = {
-	cputype:	 	bin.as(uint32, bin.Enum(CPU_TYPE)),
-	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.Enum(CPU_SUBTYPE)),
+	cputype:	 	bin.as(uint32, bin.EnumString(CPU_TYPE)),
+	cpusubtype:	bin.as(uint32, (x: number): number|string => x),//binary.EnumString(CPU_SUBTYPE)),
 	offset:		bin.UINT32_BE,		// file offset to this object file
 	size:		bin.UINT32_BE,		// size of this object file
 	align:		bin.UINT32_BE,		// alignment as a power of 2
@@ -349,7 +349,7 @@ function count_table<T extends bin.TypeReader>(type: T) {
 }
 
 const fixed_string16	= bin.String(16);
-const version			= bin.asFlags(uint32, {major: 0xffff0000, minor: 0xff00, patch: 0xff}, false);
+const version			= bin.as(uint32, bin.Flags({major: 0xffff0000, minor: 0xff00, patch: 0xff}, false));
 
 const command = {
 	cmd:		bin.as(uint32, v => v as CMD),
@@ -357,7 +357,7 @@ const command = {
 };
 
 const SECTION_FLAGS = bin.utils.BitFields(32, {
-	TYPE: bin.BitField(8, bin.Enum({
+	TYPE: bin.BitField(8, bin.EnumString({
 		REGULAR:							0x0,	// regular section
 		ZEROFILL:							0x1,	// zero fill on demand section
 		CSTRING_LITERALS:					0x2,	// section with only literal C strings
@@ -533,7 +533,7 @@ const thread_command = {
 // SYMTAB
 const nlist_flags = bin.utils.BitFields(8, {
 	ext: 1,
-	type: bin.BitField(3, bin.Enum({
+	type: bin.BitField(3, bin.EnumString({
 		UNDF:	0,		// undefined, n_sect == NO_SECT
 		ABS:	1,		// absolute, n_sect == NO_SECT
 		INDR:	5,		// indirect
@@ -541,7 +541,7 @@ const nlist_flags = bin.utils.BitFields(8, {
 		SECT:	7,		// defined in section number n_sect
 	})),
 	pext: 1,
-	stab: bin.BitField(3, bin.Enum({
+	stab: bin.BitField(3, bin.EnumString({
 
 	})),
 });
@@ -590,7 +590,7 @@ const nlist_flags = bin.utils.BitFields(8, {
 }
 */
 const nlist_desc = bin.utils.BitFields(16, {
-	ref: bin.BitField(3, bin.Enum({
+	ref: bin.BitField(3, bin.EnumString({
 		UNDEFINED_NON_LAZY:			0,
 		UNDEFINED_LAZY:				1,
 		DEFINED:					2,
@@ -681,7 +681,7 @@ const version_min = {
 
 const REBASE = bin.utils.BitFields(8, {
 	immediate: 4,
-	opcode:		bin.BitField(4, bin.Enum({
+	opcode:		bin.BitField(4, bin.EnumString({
 		DONE:								0,
 		SET_TYPE_IMM:						1,
 		SET_SEGMENT_AND_OFFSET_ULEB:		2,
@@ -699,7 +699,7 @@ const REBASE = bin.utils.BitFields(8, {
 
 const BIND = bin.utils.BitFields(8, {
 	immediate: 4,
-	opcode:		bin.BitField(4, bin.Enum({
+	opcode:		bin.BitField(4, bin.EnumString({
 		DONE:								0,
 		SET_DYLIB_ORDINAL_IMM:				1,
 		SET_DYLIB_ORDINAL_ULEB:				2,
@@ -768,7 +768,7 @@ const PLATFORM = {
 const dyld_chained_starts_in_segment = {
 	size:				uint32,			///< Size of this, including chain_starts entries
 	page_size:			uint16,		///< Page size in bytes (0x1000 or 0x4000)
-	pointer_format:	 	bin.asEnum(uint16, {
+	pointer_format:	 	bin.as(uint16, bin.EnumString( {
 		ARM64E:					1,
 		'64':					2,
 		'32':					3,
@@ -781,14 +781,14 @@ const dyld_chained_starts_in_segment = {
 		ARM64E_FIRMWARE:		10,
 		X86_64_KERNEL_CACHE:	11,
 		ARM64E_USERLAND24:		12,
-	}),
+	})),
 	segment_offset:	 	xint64,	// VM offset from the __TEXT segment
 	max_valid_pointer:	xint32,	// Values beyond this are not pointers on 32-bit
-	pages:				bin.Array(uint16, bin.asEnum(uint16, {
+	pages:				bin.Array(uint16, bin.as(uint16, bin.EnumString( {
 		NONE:		0xFFFF,
 		MULTI: 	0x8000,	// page which has multiple starts
 		LAST:		0x8000,	// last chain_start for a given page
-	}))
+	})))
 };
 
 const dyld_chained_starts_in_image	= bin.Array(uint32, bin.Offset(uint32, dyld_chained_starts_in_segment));
@@ -820,12 +820,12 @@ class dyld_chained_fixups extends bin.ReadClass({
 	imports:		bin.Offset(uint32, bin.Remainder),	// offset of imports table in chain_data
 	symbols:		bin.Offset(uint32, bin.Remainder),	// offset of symbol strings in chain_data
 	imports_count:	uint32,	// number of imported symbol names
-	imports_format:	bin.asEnum(uint32, {
+	imports_format:	bin.as(uint32, bin.EnumString( {
 		IMPORT:				1,
 		IMPORT_ADDEND:	 	2,
 		IMPORT_ADDEND64: 	3
 	}),
-	symbols_format:	bin.asEnum(uint32, {
+	symbols_format:	bin.as(uint32, bin.EnumString( {
 		UNCOMPRESSED:		0,
 		ZLIB:				1,
 	}),
@@ -870,7 +870,7 @@ const dyld_chained_ptr_64_rebase = bin.as(uint64, bin.utils.BitFields(64, {
 const data_in_code_entry = {
 	offset:	xint32,		// from header to start of data range
 	length:	uint16,		// number of bytes in data range
-	kind:	bin.as(uint16, bin.Enum({
+	kind:	bin.as(uint16, bin.EnumString({
 		DATA:				0x0001,
 		JUMP_TABLE8:		0x0002,
 		JUMP_TABLE16:		0x0003,
@@ -998,10 +998,10 @@ const cmd_table = {//: Record<CMD, binary.TypeReader2> = {
 		version:		bin.as(bin.UINT64_BE, bin.utils.BitFields(64, {a:24, b:10, c:10, d:10, e:10}))	// A.B.C.D.E packed as a24.b10.c10.d10.e10
 	},
 	[CMD.BUILD_VERSION]:			{
-		platform:		bin.asEnum(uint32, PLATFORM),
+		platform:		bin.as(uint32, bin.EnumString( PLATFORM)),
 		minos:			version,
 		sdk:			version,
-		tools:			bin.objectWithNames(bin.Array(uint32, {tool: bin.as(uint32, bin.Enum(TOOL)), version}), bin.field('tool')),
+		tools:			bin.objectWithNames(bin.Array(uint32, {tool: bin.as(uint32, bin.EnumString(TOOL)), version}), bin.field('tool')),
 	},
 	[CMD.LINKER_OPTION]:			{
 		count:			uint32,	// number of strings following
@@ -1055,7 +1055,7 @@ export class MachFile {
 		const file	= new bin.stream(data, be);
 		const h 	= bin.read(file, header);
 		const cpu	= CPU_TYPE[h.cputype as keyof typeof CPU_TYPE];
-		h.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu]).to(+h.cpusubtype);
+		h.cpusubtype = bin.EnumString(CPU_SUBTYPES[cpu]!).to(+h.cpusubtype);
 		if (bits === 64)
 			file.seek(file.tell() + 4);
 
@@ -1126,7 +1126,7 @@ export class FATMachFile {
 		for (const arch of header.archs) {
 			const cpu	= CPU_TYPE[arch.cputype as keyof typeof CPU_TYPE];
 			const data	= file.view_at(Uint8Array, arch.offset, arch. size);
-			arch.cpusubtype = bin.Enum(CPU_SUBTYPES[cpu]).to(+arch.cpusubtype);
+			arch.cpusubtype = bin.EnumString(CPU_SUBTYPES[cpu]!).to(+arch.cpusubtype);
 			arch.contents	= new MachFile(data, mem);
 		}
 	}
