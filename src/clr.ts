@@ -442,21 +442,35 @@ const ResourceManagerHeader = {
 	magic:			bin.UINT32_LE,
 	version:		bin.UINT32_LE,
 	skip:			bin.UINT32_LE,
+	_: bin.If(s => s.obj.magix == 0xBEEFCACE, {
+		reader: 		bin.String(bin.UINT8),// Class name of IResourceReader to parse this file
+		set:			bin.String(bin.UINT8),// Class name of ResourceSet to parse this file
+		version:		bin.UINT32_LE,
+		num_resources:	bin.UINT32_LE,
+		types: 			bin.Array(bin.UINT32_LE, bin.String(bin.UINT8)),
+		hashes: 	bin.Aligned(8, bin.Array('num_resources', bin.UINT32_LE)),
+		offsets:	bin.Array('num_resources', bin.UINT32_LE),
+		start:		bin.UINT32_LE,
+		entries: 	bin.Array('num_resources', {
+			name:			bin.String(bin.UINT8, 'utf16le', false, 1),
+			offset:			bin.UINT32_LE,
+		})
+	})
 };
-
+/*
 const ResourceManager = {
 	reader: 		bin.String(bin.UINT8),// Class name of IResourceReader to parse this file
 	set:			bin.String(bin.UINT8),// Class name of ResourceSet to parse this file
 	version:		bin.UINT32_LE,
 	num_resources:	bin.UINT32_LE,
-	types: 			bin.Array(bin.UINT32_LE, bin.String(bin.UINT8)),
+	types: 			bin.Array(bin.UINT32_LE, bin.String(bin.UINT8))
 };
 
 const ResourceEntry = {
 	name:			bin.String(bin.UINT8, 'utf16le', false, 1),
 	offset:			bin.UINT32_LE,
 };
-
+*/
 interface Table { count: number, size: number, offset: number }
 
 export class CLR {
@@ -572,7 +586,19 @@ export class CLR {
 }
 
 function getResources(data: Uint8Array) {
-	const stream	= new bin.stream(data); 
+	const m 		= bin.read(new bin.stream(data), ResourceManagerHeader);
+	if (m.magic == 0xBEEFCACE) {
+		const resources : Record<string, any> = {};
+		const decoder	= new TextDecoder('utf-8');
+		for (let j = 0; j < m.num_resources; j++) {
+			const from	= m.start + m.entries[j].offset;
+			resources[m.entries[j].name] = data[from] == 1
+				? decoder.decode(data.subarray(from + 2, from + 2 + data[from + 1]))
+				: data.subarray(from, j < m.num_resources - 1 ? m.start + m.entries[j + 1].offset : data.length);
+		}
+		return resources;
+	}
+	/*
 	const manager0 	= bin.read(stream, ResourceManagerHeader);
 	if (manager0.magic == 0xBEEFCACE) {
 		const manager	= bin.read_more(stream, ResourceManager, manager0);
@@ -592,6 +618,7 @@ function getResources(data: Uint8Array) {
 		}
 		return resources;
 	}
+		*/
 }
 
 // hook into PE reader

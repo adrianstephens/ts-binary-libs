@@ -22,11 +22,11 @@
 	],
 	"scripts": {
 		"prepare": "ts-patch install && copy-file node_modules/@isopodlabs/binary/scripts/transform.ts scripts/transform.ts",
-		"build": "tsc",
+		"build": "../node_modules/.bin/tsc",
 		"watch": "tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
 		"link": "npm link @isopodlabs/binary",
-		"update": "npm install @isopodlabs/binary"
+		"update": "npm install @isopodlabs/binary@latest"
 	},
 	"keywords": [
 		"binary",
@@ -37,18 +37,8 @@
 	],
 	"author": "Adrian Stephens",
 	"license": "MIT",
-	"devDependencies": {
-		"@types/node": "^22.13.8",
-		"@typescript-eslint/eslint-plugin": "^8.26.0",
-		"@typescript-eslint/parser": "^8.26.0",
-		"eslint": "^9.21.0",
-		"ts-node": "^10.9.2",
-		"ts-patch": "^3.3.0",
-		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.26.0"
-	},
-	"version": "1.8.0",
+	"version": "1.8.1",
 	"dependencies": {
-		"@isopodlabs/binary": "^1.10.2"
+		"@isopodlabs/binary": "^1.11.0"
 	}
 }
