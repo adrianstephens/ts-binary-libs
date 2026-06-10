@@ -272,7 +272,7 @@ const prop_t = bin.BitFields({
 });
 
 // Field attribute structure
-const fldattr_t = bin.as(uint16, bin.utils.BitFields(16, {
+const fldattr_t = bin.as(uint16, bin.bitfields.BitFields(16, {
 	access: 2,
 	mprop: 3,
 	pseudo: 1,
@@ -283,13 +283,13 @@ const fldattr_t = bin.as(uint16, bin.utils.BitFields(16, {
 }));
 
 // Function attribute structure
-const funcattr_t = bin.as(uint8, bin.utils.BitFields(8, {
+const funcattr_t = bin.as(uint8, bin.bitfields.BitFields(8, {
 	cxxreturnudt: 1,
 	ctor: 1,
 	ctorvbase: 1,
 }));
 
-const modifier_t = bin.as(uint16, bin.utils.BitFields(16, {
+const modifier_t = bin.as(uint16, bin.bitfields.BitFields(16, {
 	constant: 1,
 	volatile: 1,
 	unaligned: 1,
@@ -350,7 +350,7 @@ enum pmtype_e {
 };
 
 const Pointer_16t = {
-	attr: bin.as(uint32, bin.utils.BitFields(32, {
+	attr: bin.as(uint32, bin.bitfields.BitFields(32, {
 		ptrtype:	bin.BitField(5, bin.EnumString(ptrtype_e)),
 		ptrmode:	bin.BitField(3, bin.EnumString(ptrmode_e)),
 		isflat32: 	1,
@@ -377,7 +377,7 @@ const Pointer_16t = {
 
 const Pointer = {
 	utype: type_t,
-	attr: bin.as(uint32, bin.utils.BitFields(32, {
+	attr: bin.as(uint32, bin.bitfields.BitFields(32, {
 		ptrtype:	bin.BitField(5, bin.EnumString(ptrtype_e)),
 		ptrmode:	bin.BitField(3, bin.EnumString(ptrmode_e)),
 		isflat32: 1,
@@ -442,7 +442,7 @@ const Matrix = {
 	rows: uint32,
 	cols: uint32,
 	majorStride: uint32,
-	_: bin.as(uint32, bin.utils.BitFields(32, {
+	_: bin.as(uint32, bin.bitfields.BitFields(32, {
 		row_major: 1,
 		unused: 7,
 	})),
@@ -938,7 +938,7 @@ const SYMTYPE = {
 				off: uint32,
 				seg: uint16,
 			},
-			flags: bin.as(uint8, bin.utils.BitFields(8, {
+			flags: bin.as(uint8, bin.bitfields.BitFields(8, {
 				PFLAG_NOFPO: 1,
 				PFLAG_INT: 1,
 				PFLAG_FAR: 1,
@@ -970,7 +970,7 @@ enum DEBUG_S {
 // Line information
 const LineInfo = {
 	offset: uint32,
-	_: bin.as(uint32, bin.utils.BitFields(32, {
+	_: bin.as(uint32, bin.bitfields.BitFields(32, {
 		linenumStart: 24,
 		deltaLineEnd: 7,
 		fStatement: 1,

@@ -229,7 +229,7 @@ const SHF = {
 
 //--------------------	SYMBOLS
 
-const ST_INFO = bin.utils.BitFields(8, {
+const ST_INFO = bin.bitfields.BitFields(8, {
 	type:		bin.BitField(4, bin.EnumString({
 		NOTYPE:		0,				//The symbol's type is not specified
 		OBJECT:		1,				//associated with a data object
@@ -252,7 +252,7 @@ const ST_INFO = bin.utils.BitFields(8, {
 	})),
 });
 
-const ST_OTHER = bin.utils.BitFields(8, {
+const ST_OTHER = bin.bitfields.BitFields(8, {
 	visibility:	bin.BitField(2, bin.EnumString({
 		DEFAULT:	0,
 		HIDDEN:		1,
@@ -623,7 +623,7 @@ function readDataAs<T extends bin.Type>(data: MappedMemory | undefined, type: T)
 
 export class ELFFile {
 	static check(data: Uint8Array): boolean {
-		return bin.utils.decodeText(data.subarray(0, 4), 'utf8') === '\x7fELF';
+		return bin.text.decode(data.subarray(0, 4), 'utf8') === '\x7fELF';
 	}
 
 	segments;
@@ -638,7 +638,7 @@ export class ELFFile {
 	constructor(data: Uint8Array) {
 		const s		= new bin.stream(data);
 		const ident = bin.read(s, Ident);
-		if (ident.magic != bin.utils.stringCode("\x7fELF"))
+		if (ident.magic != bin.text.stringCode("\x7fELF"))
 			throw new Error('Not an ELF file');
 
 		const	be		= ident.encoding	== 'MSB';
@@ -737,7 +737,7 @@ export class ELFFile {
 
 		//set section names
 		const shnames	= sh[h.e_shstrndx].data.data;
-		this.sections	= sh.map(i => [bin.utils.decodeTextTo0(shnames.subarray(i.sh_name), 'utf8'), i] as [string, typeof i]);
+		this.sections	= sh.map(i => [bin.text.decodeToNull(shnames.subarray(i.sh_name), 'utf8'), i] as [string, typeof i]);
 
 		const Dyn = {
 			d_tag:	bin.as(Sword, bin.EnumString( DT_TAG)),
@@ -785,7 +785,7 @@ export class ELFFile {
 						const flags	= sym.st_info.type === 'FUNC' ? section.data.flags : section.data.flags & ~MappedMemory.EXECUTE;
 						sym.data = new MappedMemory(section.data.data.subarray(offset, offset + Number(sym.st_size)), BigInt(sym.st_value.value), flags);
 					}
-					return [bin.utils.decodeTextTo0(names.subarray(sym.st_name), 'utf8'), sym] as [string, typeof sym];
+					return [bin.text.decodeToNull(names.subarray(sym.st_name), 'utf8'), sym] as [string, typeof sym];
 				});
 			}
 		}

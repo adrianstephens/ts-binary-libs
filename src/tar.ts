@@ -113,11 +113,8 @@ function getChecksum(h: TarHeader): number {
 }
 
 function checkHeader(buffer: Uint8Array): boolean {
-	const sum = bufferChecksum(buffer);
-	const checksum = parseInt(new TextDecoder().decode(buffer.subarray(148, 156)).trim(), 8);
-	return sum === checksum;
+	return bufferChecksum(buffer) === parseInt(new TextDecoder().decode(buffer.subarray(148, 156)).trim(), 8);
 }
-
 
 function isZeroBlock(buffer: Uint8Array): boolean {
 	return buffer.every(b => b === 0);
@@ -145,7 +142,7 @@ function parsePax(pax: Record<string, string>, data: Uint8Array) {
 		if (i === start || i >= data.length || data[i] !== 32 || start + len > data.length)
 			break;
 
-		const line	= bin.utils.decodeText(data.subarray(i + 1, start + len));
+		const line	= bin.text.decode(data.subarray(i + 1, start + len));
 		const eq	= line.indexOf('=');
 		if (eq !== -1 && line.endsWith('\n'))
 			pax[line.substring(0, eq)] = line.substring(eq + 1, line.length - 1);
@@ -263,7 +260,7 @@ export class Entry extends bin.Class(TarHeader) {
 			bin.interop.stream(s).write(TarHeader, makeHeader({
 				name:		'.pax_extended',
 				typeflag:	TypeFlag.PAX_EXTENDED,
-				data:		bin.utils.encodeText(paxData),
+				data:		bin.text.encode(paxData),
 				mtime:		this.mtime
 			}));
 		}
@@ -341,11 +338,11 @@ export class Document extends Hierarchy<Entry> {
 						continue;
 
 					case TypeFlag.GNU_LONG_NAME:
-						pax.path = TrimNull0(bin.utils.decodeText(h.data));
+						pax.path = TrimNull0(bin.text.decode(h.data));
 						continue;
 
 					case TypeFlag.GNU_LONG_LINK:
-						pax.linkpath = TrimNull0(bin.utils.decodeText(h.data));
+						pax.linkpath = TrimNull0(bin.text.decode(h.data));
 						continue;
 
 					case TypeFlag.GNU_SPARSE:
@@ -537,13 +534,13 @@ export class Document extends Hierarchy<Entry> {
 			yield e;
 	}
 
-	static async loadTGZ(data: Uint8Array) {
-		return new this(new bin.stream(await bin.decompress('gzip')(data)));
+	static async loadCompress(comp: string, data: Uint8Array) {
+		return new this(new bin.stream(await bin.decompress(comp)(data)));
 	}
 
-	async saveTGZ(cancel?: Cancellation) {
+	async saveCompress(comp: string, cancel?: Cancellation) {
 		const out = new bin.growingStream();
 		if (await this.writeAll(out, cancel))
-			return bin.compress('gzip')(out.terminate());
+			return bin.compress(comp)(out.terminate());
 	}
 }

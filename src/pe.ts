@@ -188,15 +188,15 @@ const RVA_BLOB = {
 	put(_s: pe_stream)	{}
 };
 const RVA_STRING = {
-	get(s: pe_stream)	{ return bin.utils.decodeTextTo0(s.get_rva(), 'utf8'); },
+	get(s: pe_stream)	{ return bin.text.decodeToNull(s.get_rva(), 'utf8'); },
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY16 = {
-	get(s: pe_stream)	{ return bin.utils.as16(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.typedArray.as(s.get_rva(), 'Uint16'); },
 	put(_s: pe_stream)	{}
 };
 const RVA_ARRAY32 = {
-	get(s: pe_stream)	{ return bin.utils.as32(s.get_rva()); },
+	get(s: pe_stream)	{ return bin.typedArray.as(s.get_rva(), 'Uint32'); },
 	put(_s: pe_stream)	{}
 };
 
@@ -340,14 +340,14 @@ export class PE extends bin.Class({
 		res2:		bin.Array(10, uint16),
 	},
 	PE: bin.Offset(bin.INT32_LE, {
-		sig:		bin.Expect(uint32, bin.utils.stringCode("PE\0\0")),
+		sig:		bin.Expect(uint32, bin.text.stringCode("PE\0\0")),
 		...COFF_HEADER,
 		opt:		bin.Optional('SizeOfOptionalHeader', bin.Size('SizeOfOptionalHeader', OPTIONAL_HEADER)),
 		sections:	bin.Array('NumberOfSections', Section),
 	})
 }) {
 	static check(data: Uint8Array): boolean {
-		return uint16.get(new bin.stream(data)) === bin.utils.stringCode("MZ");
+		return uint16.get(new bin.stream(data)) === bin.text.stringCode("MZ");
 	}
 
 	constructor(data: Uint8Array) {
@@ -442,7 +442,7 @@ export function ReadExports(file: pe_stream) {
 		const sect = file.pe.FindSectionRVA(addresses[i]);
 		if (sect) {
 			const ordinal	= (ordinals && i < dir.NumberNames ? ordinals[i] : i) + dir.OrdinalBase;
-			const name		= names && i < dir.NumberNames ? bin.utils.decodeTextTo0(file.pe.GetDataRVA(names[i])?.data, 'utf8') : '';
+			const name		= names && i < dir.NumberNames ? bin.text.decodeToNull(file.pe.GetDataRVA(names[i])?.data, 'utf8') : '';
 			result.push({ordinal, name, address: addresses[i]});
 		}
 	}
@@ -463,13 +463,13 @@ export class DLLImports extends Array {}
 
 const RVA_ITA64 = {
 	get(s: pe_stream)	{ 
-		const r = bin.utils.as64(s.get_rva());
+		const r = bin.typedArray.as(s.get_rva(), 'BigUint64');
 		if (r) {
 			const end = r.indexOf(0n);
 			const result = Array.from(end < 0 ? r : r.subarray(0, end), i =>
 				i >> 63n
 					? `ordinal_${i - (1n << 63n)}`
-					: bin.utils.decodeTextTo0(s.pe.GetDataRVA(Number(i))?.data.subarray(2), 'utf8')
+					: bin.text.decodeToNull(s.pe.GetDataRVA(Number(i))?.data.subarray(2), 'utf8')
 			);
 			Object.setPrototypeOf(result, DLLImports.prototype);
 			return result;

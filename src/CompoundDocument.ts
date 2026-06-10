@@ -121,7 +121,7 @@ class FAT {
 	async flush(to: FAT, chain: number[]) {
 		for (const i of this.dirty.keys()) {
 			const sector = await to.dirty_sector(chain[i]);
-			sector?.set(bin.utils.as8(this.fat.subarray(i << this.fat_shift, (i + 1) << this.fat_shift)));
+			sector?.set(bin.typedArray.as(this.fat.subarray(i << this.fat_shift, (i + 1) << this.fat_shift), 'Uint8'));
 		}
 		this.dirty.clear();
 	}
@@ -240,13 +240,13 @@ class Master {
 		let 	next	= this.header.first_difat;
 		for (let i = 0; i < this.header.num_difat; i++) {
 			this.difat_chain.push(next);
-			const difat	= bin.utils.as32(await this.sectors.sector(next));
+			const difat	= bin.typedArray.as(await this.sectors.sector(next), 'Uint32');
 			next 		= difat[sat_per_difat];
 			this.fat_chain.push(...Array.from(difat.subarray(0, Math.min(sat_per_difat, num_fat - this.fat_chain.length))));
 		}
 
 		this.fat = new FAT(
-			bin.utils.as32s(await read_chain_alloc(this.sectors, this.fat_chain)),
+			bin.typedArray.as(await read_chain_alloc(this.sectors, this.fat_chain), 'Int32') as Int32Array,
 			this.header.sector_shift - 2,
 			this.sectors
 		);
@@ -277,7 +277,7 @@ class Master {
 
 			for (let i = Math.max(this.header.num_difat - 1, 0); i < num_difat; i++) {
 				const p = 109 + i * sat_per_difat;
-				const difat = bin.utils.as32s(await this.fat.dirty_sector(this.difat_chain[i]));
+				const difat = bin.typedArray.as(await this.fat.dirty_sector(this.difat_chain[i]), 'Int32');
 				if (difat) {
 					difat.set(this.fat_chain.slice(p, p + sat_per_difat));
 					difat[sat_per_difat] = this.difat_chain[i + 1] ?? SecID.ENDOFCHAIN;
@@ -537,7 +537,7 @@ export class Reader extends Master {
 
 		this.mini_chain = this.fat.get_chain(this.entries[0].sec_id);
 		this.mini_fat	= new FAT(
-			bin.utils.as32s(await this.fat.read_chain_alloc(this.fat.get_chain(this.header.first_mini))),
+			bin.typedArray.as(await this.fat.read_chain_alloc(this.fat.get_chain(this.header.first_mini)), 'Int32') as Int32Array,
 			this.header.sector_shift - 2, {
 				shift: this.header.mini_shift,
 				sector:			async (id: number) => (await this.fat.chain_part(this.mini_chain, id << this.header.mini_shift))!,

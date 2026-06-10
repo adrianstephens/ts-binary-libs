@@ -23,7 +23,7 @@ const SYM64 = {
 
 export class ArchFile {
 	static check(data: Uint8Array): boolean {
-		return bin.utils.decodeText(data.subarray(0, 8), 'utf8') == '!<arch>\n';
+		return bin.text.decode(data.subarray(0, 8), 'utf8') == '!<arch>\n';
 	}
 
 	members: HEADER[] = [];
@@ -44,7 +44,7 @@ export class ArchFile {
 			s.align(2);
 
 			if (member.name == '/') {
-				long_names = bin.utils.decodeText(data, 'utf8');
+				long_names = bin.text.decode(data, 'utf8');
 				continue;
 			}
 			if (member.name[0] == '/' && long_names) {

@@ -35,23 +35,23 @@ type METHOD = typeof METHOD[keyof typeof METHOD];
 
 // ZIP Central Directory - 'Made By' OS values (high byte)
 export const OS = {
-	MSDOS:	0,
-	UNIX:	3,
-	NTFS:	10,
-	MACOS:	19,
+	MSDOS:		0,
+	UNIX:		3,
+	NTFS:		10,
+	MACOS:		19,
 } as const;
 
 // ZIP Central Directory - 'Made By' spec versions (low byte, version * 10)
 export const Version = {
-	V1_0:	10,
-	V1_1:	11,
-	V2_0:	20,
-	V4_5:	45,
+	V1_0:		10,
+	V1_1:		11,
+	V2_0:		20,
+	V4_5:		45,
 } as const;
 
 export const InternalAttr = {
-	BINARY:	0x0000,
-	TEXT:	0x0001,
+	BINARY:		0x0000,
+	TEXT:		0x0001,
 } as const;
 
 export const DosAttr = {
@@ -66,7 +66,7 @@ function madeBy(os: typeof OS[keyof typeof OS], ver: typeof Version[keyof typeof
 	return {ver: bin.Enum(Version)(ver), os: bin.Enum(OS)(os)};
 }
 
-const time_bits = bin.utils.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
+const time_bits = bin.bitfields.BitFields(32, {seconds2:5, minute:6, hour:5,day:5, month:4, years1980:7} as const);
 const ZipTime = bin.as(bin.UINT32_LE,
 	x => {
 		const t = time_bits.to(x);
@@ -101,7 +101,7 @@ const extension_unicode = {
 	text:		bin.RemainingString('utf8'),
 };
 
-const extra = bin.Size('extra_length', bin.RemainingRepeat({
+const extra = bin.Merge(bin.Size('extra_length', bin.RemainingRepeat({
 	id: bin.UINT16_LE,
 	_: bin.Merge(bin.Size(bin.UINT16_LE, bin.Switch(s => s.obj.id, {
 		[EXTENSION.ZIP64]: 			{
@@ -138,7 +138,7 @@ const extra = bin.Size('extra_length', bin.RemainingRepeat({
 			})),
 		},
 	})))
-}, (s, _v) => makeExtra(s.obj)));
+}, (s, _v) => makeExtra(s.obj))));
 
 const SIG = {
 	PK:					0x4b50,
@@ -242,7 +242,7 @@ const Chunk = {
 	}),
 };
 
-const CRC32 = bin.utils.CRC(0xedb88320, 0xffffffff, 0xffffffff);
+const CRC32 = bin.crc(0xedb88320, 0xffffffff, 0xffffffff);
 
 class encryption {
 	K0	= 0x12345678;
@@ -536,7 +536,7 @@ export class Document extends Hierarchy<Entry> {
 		for (const entry of this.entries) {
 			if (entry.isSymbolicLink) {
 				const data = await entry.data.get();
-				this.fixLink(entry, bin.utils.decodeText(data));
+				this.fixLink(entry, bin.text.decode(data));
 			}
 		}
 

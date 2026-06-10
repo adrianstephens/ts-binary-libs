@@ -486,7 +486,7 @@ export class CLR {
 		const meta_data	= pe.GetDataDir(this.header.MetaData);
 		const meta_root	= meta_data && bin.read(new bin.stream(meta_data.data), METADATA_ROOT);
 
-		if (meta_root?.Signature != bin.utils.stringCode('BSJB'))
+		if (meta_root?.Signature != bin.text.stringCode('BSJB'))
 			throw new Error("Invalid CLR");
 
 		let 	table_data;
@@ -508,8 +508,8 @@ export class CLR {
 			const table_counts: number[] = [];
 
 			//read counts
-			for (let b = this.table_info.Valid; b; b = bin.utils.clearLowest(b)) {
-				const i = bin.utils.lowestSetIndex(b);
+			for (let b = this.table_info.Valid; b; b = bin.clearLowest(b)) {
+				const i = bin.lowestSetIndex(b);
 				table_counts[i] = bin.UINT32_LE.get(stream);
 			}
 
@@ -517,8 +517,8 @@ export class CLR {
 			const stream1 	= new clr_dummy(this.table_info.HeapSizes, table_counts);
 			let offset 		= 0;
 
-			for (let b = this.table_info.Valid; b; b = bin.utils.clearLowest(b)) {
-				const i = bin.utils.lowestSetIndex(b) as TABLE;
+			for (let b = this.table_info.Valid; b; b = bin.clearLowest(b)) {
+				const i = bin.lowestSetIndex(b) as TABLE;
 				stream1.seek(0);
 				bin.read(stream1, TableReaders[i]);
 				this.tables[i] = {offset, count: table_counts[i], size: stream1.tell()};

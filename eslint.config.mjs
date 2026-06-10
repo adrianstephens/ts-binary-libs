@@ -32,10 +32,10 @@ export default tslint.config(
 		},
 	},
 	{
-		files: ["src/*.ts"],
+		files: ["**/*.ts"],
 		languageOptions: {
 			parserOptions: {
-				project: './tsconfig.json',
+				project: ['./tsconfig.json', './test/tsconfig.json'],
 				tsconfigRootDir: dirname(fileURLToPath(import.meta.url))
 			}
 		}

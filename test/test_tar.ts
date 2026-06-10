@@ -29,6 +29,14 @@ async function openWriteFile(filename: string) {
 
 (async () => {
 	{
+		const data = await fs.readFile('/Users/adrianstephens/Downloads/file.bz2');
+		const decomp = await bin.decompress('bzip2')(data);
+	}
+	{
+		const data = await fs.readFile('/Users/adrianstephens/Downloads/sample-1');
+		
+	}
+	{
 		const data = await fs.readFile('E:\\dev\\WEVR\\depot\\swdev\\wb\\wb_vs2017\\WemoExternal\\tmp\\Cellar.tar');
 		const fileIn = new bin.stream(data);
 		const tarFile = new tar.Document(fileIn);
@@ -42,3 +50,5 @@ async function openWriteFile(filename: string) {
 })().catch(e => 
 	console.error(e)
 );
+
+///Users/adrianstephens/Downloads/file.bz2 
