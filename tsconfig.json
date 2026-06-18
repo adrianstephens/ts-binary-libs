@@ -15,7 +15,7 @@
 		"types": ["node"],
 		"plugins": [
 			{
-				"transform": "./scripts/transform.ts",
+				"transform": "./node_modules/@isopodlabs/binary/scripts/transform.ts",
 				"afterDeclarations": true
 			}
 		]

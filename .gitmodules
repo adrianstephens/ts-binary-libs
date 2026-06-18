@@ -1,3 +1,0 @@
-[submodule "node_modules/@isopodlabs/binary"]
-	path = node_modules/@isopodlabs/binary
-	url = https://github.com/adrianstephens/binary.git

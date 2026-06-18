@@ -21,7 +21,6 @@
 		"README.md"
 	],
 	"scripts": {
-		"prepare": "ts-patch install && copy-file node_modules/@isopodlabs/binary/scripts/transform.ts scripts/transform.ts",
 		"build": "../node_modules/.bin/tsc",
 		"watch": "tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
@@ -37,7 +36,7 @@
 	],
 	"author": "Adrian Stephens",
 	"license": "MIT",
-	"version": "1.9.0",
+	"version": "1.10.0",
 	"dependencies": {
 		"@isopodlabs/binary": "^2.0.1"
 	}

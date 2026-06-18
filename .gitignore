@@ -1,5 +1,6 @@
 hidden
 node_modules
+assistant
 dist
 scripts/transform.ts
 *.tgz
