@@ -1,7 +1,7 @@
 import * as bin from '@isopodlabs/binary';
 import * as lzma from './lzma';
-import { branchCodecs, decodeBCJ2, decodeDelta } from './7z_branch';
-import { Hierarchy, UnixMode, WindowsFileAttributes } from './common';
+import * as codecs from './7z_codecs';
+import { Hierarchy, UnixMode, WindowsFileAttributes, Cancellation } from './common';
 
 const SIGNATURE = new Uint8Array([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]); // "7z¼¶"
 
@@ -75,7 +75,7 @@ function External<T extends bin.Type>(spec: T) {
 		bin.as(UINT64, async (i, s) => {
 			const streams	= s.lookupObj('additionalStreams') as StreamsInfo;
 			const data		= await streams.decode(s.lookupObj('packed')!, i);
-			return new bin.stream(data).read(spec);
+			return new bin.stream(data!).read(spec);
 		}),
 		spec
 	);
@@ -103,13 +103,15 @@ function singleStream(handler: (input: Uint8Array, props: Uint8Array, outSize: n
 
 const CODEC_ID: {id: Uint8Array, handler: CodecHandler;}[] = [
 /*COPY*/	{id: new Uint8Array([0x00]),					handler: singleStream(input => input)},
-/*DELTA*/	{id: new Uint8Array([0x03]),					handler: singleStream((input, props) => decodeDelta(props, input))},
-/*BCJ*/		{id: new Uint8Array([0x03, 0x03, 0x01, 0x03]),	handler: singleStream(input => branchCodecs.x86(input))},
-/*PPC*/		{id: new Uint8Array([0x03, 0x03, 0x02, 0x05]),	handler: singleStream(input => branchCodecs.ppc(input))},
-/*ARM*/		{id: new Uint8Array([0x03, 0x03, 0x05, 0x01]),	handler: singleStream(input => branchCodecs.arm(input))},
-/*ARMT*/	{id: new Uint8Array([0x03, 0x03, 0x07, 0x01]),	handler: singleStream(input => branchCodecs.armt(input))},
-/*SPARC*/	{id: new Uint8Array([0x03, 0x03, 0x08, 0x05]),	handler: singleStream(input => branchCodecs.sparc(input))},
-/*BCJ2*/	{id: new Uint8Array([0x03, 0x03, 0x01, 0x1b]),	handler: inputs => [decodeBCJ2(inputs)]},
+/*DELTA*/	{id: new Uint8Array([0x03]),					handler: singleStream((input, props) => codecs.decodeDelta(props, input))},
+/*BCJ*/		{id: new Uint8Array([0x03, 0x03, 0x01, 0x03]),	handler: singleStream(input => codecs.branchX86(input))},
+/*PPC*/		{id: new Uint8Array([0x03, 0x03, 0x02, 0x05]),	handler: singleStream(input => codecs.branchPPC(input))},
+/*ARM*/		{id: new Uint8Array([0x03, 0x03, 0x05, 0x01]),	handler: singleStream(input => codecs.branchARM(input))},
+/*ARMT*/	{id: new Uint8Array([0x03, 0x03, 0x07, 0x01]),	handler: singleStream(input => codecs.branchARMT(input))},
+/*SPARC*/	{id: new Uint8Array([0x03, 0x03, 0x08, 0x05]),	handler: singleStream(input => codecs.branchSPARC(input))},
+/*SWAP2*/	{id: new Uint8Array([0x03, 0x03, 0x01, 0x02]),	handler: singleStream(input => codecs.swap2(input))},
+/*SWAP4*/	{id: new Uint8Array([0x03, 0x03, 0x01, 0x04]),	handler: singleStream(input => codecs.swap4(input))},
+/*BCJ2*/	{id: new Uint8Array([0x03, 0x03, 0x01, 0x1b]),	handler: inputs => [codecs.decodeBCJ2(inputs)]},
 /*DEFLATE*/	{id: new Uint8Array([0x01, 0x01, 0x00, 0x01]),	handler: singleStream(input => bin.decompress('deflate-raw')(input))},
 /*BZIP2*/	{id: new Uint8Array([0x02, 0x02, 0x42, 0x32]),	handler: singleStream(input => bin.decompress('bzip2')(input))},
 /*LZMA*/	{id: new Uint8Array([0x03, 0x01, 0x01]),		handler: singleStream((input, props, outSize) => lzma.decompress(props, input, outSize))},
@@ -122,7 +124,7 @@ class Coder extends bin.Class({
 	flags:		bin.UINT8,
 	codecId:	bin.Buffer(s => s.obj.flags & 0xf, Uint8Array),
 	complex:	bin.Optional(s => s.obj.flags & 0x10, {numIn: UINT64, numOut: UINT64}),
-	props:		bin.Optional(s => s.obj.flags & 0x20, bin.Buffer(UINT64, Uint8Array))
+	props:		bin.Optional(s => s.obj.flags & 0x20, bin.Buffer(UINT64, Uint8Array), bin.Const(new Uint8Array))
 }) {
 	get numIn()		{ return this.complex?.numIn ?? 1; }
 	get numOut()	{ return this.complex?.numOut ?? 1; }
@@ -284,9 +286,9 @@ class StreamsInfo extends bin.Class(bin.RemainingRepeat(bin.Switch(bin.UINT8, {
 			digests:	Defined(bin.UINT32_LE, 'count')
 		},
 		default:	{buffer: bin.Buffer(UINT64)}
-	})),
+	}), splitSubstreamsInfo),
 	default: {buffer: bin.Buffer(UINT64)}
-}))) {
+}, discrimStreamsInfo)/*, splitStreamsInfo*/)) {
 
 	async decode(packed: Uint8Array, streamIndex: number) {
 		const folders		= Array.isArray(this.folders) ? this.folders : [];
@@ -308,6 +310,34 @@ class StreamsInfo extends bin.Class(bin.RemainingRepeat(bin.Switch(bin.UINT8, {
 	}
 };
 
+function getFields(obj: any, fields: string[]) {
+	const filtered = fields.filter(f => f in obj);
+	return filtered.length
+		? Object.fromEntries(filtered.map(f => [f, obj[f]]))
+		: undefined;
+}
+
+function splitStreamsInfo(s: any, value: any) {
+	return [
+		getFields(value, ['pos', 'numStreams', 'size']),
+		getFields(value, ['numFolders', 'folders', 'unpackSizes']),
+		getFields(value, ['NumUnPackStreamsInFolders', 'unpackSize']),
+	].filter(Boolean);
+}
+function splitSubstreamsInfo(s: any, value: any) {
+	return [
+		getFields(value, ['NumUnPackStreamsInFolders']),
+		getFields(value, ['unpackSize']),
+	].filter(Boolean) as any;
+}
+
+function discrimStreamsInfo(value: any): any {
+	return 'pos' in value ? PROPERTY.PACK_INFO :
+		'numFolders' in value ? PROPERTY.CODERS_INFO :
+		'unpackSize' in value ? PROPERTY.SUBSTREAMS_INFO :
+		undefined;
+}
+
 const FilesInfo = {
 	numFiles:	UINT64,
 	_: bin.Merge(bin.RemainingRepeat(bin.Switch(bin.UINT8, {
@@ -317,33 +347,53 @@ const FilesInfo = {
 		[PROPERTY.EMPTY_FILE]: 		{empty_file:	BITS},
 		[PROPERTY.ANTI]: 			{anti:			BITS},
 
-		[PROPERTY.CTIME]:			bin.Size(UINT64, {ctime:	DefinedExternal(TIME, 'numFiles')}),
-		[PROPERTY.ATIME]:			bin.Size(UINT64, {atime:	DefinedExternal(TIME, 'numFiles')}),
-		[PROPERTY.MTIME]:			bin.Size(UINT64, {mtime:	DefinedExternal(TIME, 'numFiles')}),
-		[PROPERTY.WINATTRIBUTES]:	bin.Size(UINT64, {attr:		DefinedExternal(bin.UINT32_LE, 'numFiles')}),
-		[PROPERTY.STARTPOS]:		bin.Size(UINT64, {pos:		Defined(UINT64, 'numFiles')}),
-		[PROPERTY.NAME]:			bin.Size(UINT64, {names:	External(bin.Array('numFiles', bin.NullTerminatedString('utf16le')))}),
+		[PROPERTY.CTIME]:			{ctime:	bin.Size(UINT64, DefinedExternal(TIME, 'numFiles'))},
+		[PROPERTY.ATIME]:			{atime:	bin.Size(UINT64, DefinedExternal(TIME, 'numFiles'))},
+		[PROPERTY.MTIME]:			{mtime:	bin.Size(UINT64, DefinedExternal(TIME, 'numFiles'))},
+		[PROPERTY.WINATTRIBUTES]:	{attr:	bin.Size(UINT64, DefinedExternal(bin.UINT32_LE, 'numFiles'))},
+		[PROPERTY.STARTPOS]:		{pos:	bin.Size(UINT64, Defined(UINT64, 'numFiles'))},
+		[PROPERTY.NAME]:			{names:	bin.Size(UINT64, External(bin.Array('numFiles', bin.NullTerminatedString('utf16le'))))},
 		default: {buffer: bin.Buffer(UINT64)}
-	})))
+	}), splitFilesInfo))
 };
+function splitFilesInfo(s: any, value: any) {
+	return [
+		getFields(value, ['empty_stream']),
+		getFields(value, ['empty_file']),
+		getFields(value, ['anti']),
+		getFields(value, ['ctime']),
+		getFields(value, ['atime']),
+		getFields(value, ['mtime']),
+		getFields(value, ['attr']),
+		getFields(value, ['pos']),
+		getFields(value, ['names']),
+	].filter(Boolean) as any;
+}
 
 const Header  = bin.RemainingRepeat(
 	bin.Switch(bin.UINT8, {
 		[PROPERTY.END]:						bin.Const(undefined),
-		[PROPERTY.ARCHIVE_PROPERTIES]:		bin.RemainingArray({
+		[PROPERTY.ARCHIVE_PROPERTIES]:		{properties: bin.RemainingArray({
 			type:	bin.as(bin.UINT8, x => {
 				if (x === 0)
 					throw 'stop';
 				 return x;
 			}),
 			data:	bin.Buffer(UINT64, Uint8Array)
-		}),
+		})},
 		[PROPERTY.ADDITIONAL_STREAMS_INFO]:	{additionalStreams:	StreamsInfo},
 		[PROPERTY.MAIN_STREAMS_INFO]:		{mainStreams:		StreamsInfo},
 		[PROPERTY.FILES_INFO]:				{files:				FilesInfo},
 		default: {buffer: bin.Buffer(UINT64)}
-	})
+	}),
+	splitHeader
 );
+export type Header = bin.ReadType<typeof Header>;
+
+function splitHeader(_s: any, h: any): any[] {
+	const header = h as Header;
+	return [{mainStreams: header.mainStreams}, {files: header.files}];
+}
 
 const Seven7Header = {
 	signature:			bin.Expect(bin.Buffer(6, Uint8Array), SIGNATURE),
@@ -373,9 +423,13 @@ const Seven7Header = {
 				}
 			}),
 			default: {buffer: bin.Buffer(UINT64)}
-		})
+		}, () => PROPERTY.HEADER)
 	)))
 } as const;
+
+export type FilesInfo = bin.ReadType<typeof FilesInfo>;
+//export type StreamsInfo = bin.ReadType<typeof StreamsInfo>;
+export type Seven7Header = bin.ReadType<typeof Seven7Header>;
 
 //-----------------------------------------------------------------------------
 // Entry - represents a file/folder in the 7Z archive
@@ -441,6 +495,7 @@ interface FileData {
 
 export class Document extends Hierarchy<Entry> {
 	entries: Entry[] = [];
+	parsed?: Seven7Header;
 	ready: Promise<void>;
 
 	constructor(file?: bin._stream | bin.async._stream) {
@@ -454,7 +509,7 @@ export class Document extends Hierarchy<Entry> {
 
 	private async readAll(file0: bin._stream | bin.async._stream) {
 		try {
-			const parsed	= await bin.interop.stream(file0).read(Seven7Header);
+			const parsed	= this.parsed = await bin.interop.stream(file0).read(Seven7Header);
 			const packed	= parsed.packed;
 			const streams	= parsed.mainStreams;
 			const files		= parsed.files;
@@ -462,7 +517,7 @@ export class Document extends Hierarchy<Entry> {
 			if (streams && files && files.numFiles > 0) {
 
 				if (!Array.isArray(streams.folders)) {
-					const file2		= new bin.stream(await parsed.additionalStreams!.decode(packed, streams.folders!));
+					const file2		= new bin.stream((await parsed.additionalStreams!.decode(packed, streams.folders!))!);
 					streams.folders	= Array.from({length: Number(streams.numFolders ?? 0)}, () => new Folder(file2));
 				}
 
@@ -506,7 +561,7 @@ export class Document extends Hierarchy<Entry> {
 						const plan			= plans[substream++];
 						e.uncompressed_size = plan.size;
 						e.extractor			= async () => {
-							return (await streams.decode(packed, plan.streamIndex)).subarray(plan.offset, plan.offset + plan.size);
+							return (await streams.decode(packed, plan.streamIndex))!.subarray(plan.offset, plan.offset + plan.size);
 						};
 					}
 
@@ -521,4 +576,39 @@ export class Document extends Hierarchy<Entry> {
 			console.error('Error reading 7z archive:', e);
 		}
 	}
+
+	async writeAll(file0: bin._stream | bin.async._stream, _cancel?: Cancellation): Promise<boolean> {
+		/*
+		const parsed: Seven7Header = {
+			version: { major: 0, minor: 0 },
+			startHeaderCRC: 0,
+
+			nextHeaderOffset: 0n,
+			nextHeaderSize: 0n,
+			nextHeaderCRC: 0,
+			packed: new Uint8Array(0),
+
+			mainStreams: {
+				pos: 0,
+				numStreams: 0,
+				numFolders: 0,
+				folders: [],
+				NumUnPackStreamsInFolders: [],
+				unpackSize: [],
+			},
+			files: {
+				numFiles: this.entries.length,
+				names: this.entries.map(e => e.filename),
+				mtime: this.entries.map(e => e.mtime),
+				attr: this.entries.map(e => e.attributes),
+			}
+
+		};
+*/
+		if (!this.parsed)
+			return false;
+		await bin.interop.stream(file0).write(Seven7Header, this.parsed);
+		return true;
+	}
+	
 }

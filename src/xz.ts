@@ -1,7 +1,7 @@
 import * as bin from '@isopodlabs/binary';
 import * as lzma from './lzma';
 import * as crypto from 'crypto';
-import { branchCodecs, decodeDelta } from './7z_branch';
+import * as codecs from './7z_codecs';
 
 const CRC32 = bin.crc(0xedb88320, 0xffffffff, 0xffffffff);
 const CRC64 = bin.crc(0x42f0e1eba9ea3693n, 0xffffffffffffffffn, 0xffffffffffffffffn);
@@ -21,12 +21,12 @@ const XZ_FILTER = {
 
 const CODEC_ID: {id: number|bigint, handler: (input: Uint8Array, props: Uint8Array, outSize: number) => Uint8Array}[] = [
 /*COPY*/	{ id: XZ_FILTER.COPY, 	handler: input => input },
-/*DELTA*/	{ id: XZ_FILTER.DELTA, 	handler: (input, props) => decodeDelta(props, input)},
-/*BCJ*/		{ id: XZ_FILTER.BCJ, 	handler: input => branchCodecs.x86(input)},
-/*PPC*/		{ id: XZ_FILTER.PPC, 	handler: input => branchCodecs.ppc(input)},
-/*ARM*/		{ id: XZ_FILTER.ARM, 	handler: input => branchCodecs.arm(input)},
-/*ARMT*/	{ id: XZ_FILTER.ARMT, 	handler: input => branchCodecs.armt(input)},
-/*SPARC*/	{ id: XZ_FILTER.SPARC, 	handler: input => branchCodecs.sparc(input)},
+/*DELTA*/	{ id: XZ_FILTER.DELTA, 	handler: (input, props) => codecs.decodeDelta(props, input)},
+/*BCJ*/		{ id: XZ_FILTER.BCJ, 	handler: input => codecs.branchX86(input)},
+/*PPC*/		{ id: XZ_FILTER.PPC, 	handler: input => codecs.branchPPC(input)},
+/*ARM*/		{ id: XZ_FILTER.ARM, 	handler: input => codecs.branchARM(input)},
+/*ARMT*/	{ id: XZ_FILTER.ARMT, 	handler: input => codecs.branchARMT(input)},
+/*SPARC*/	{ id: XZ_FILTER.SPARC, 	handler: input => codecs.branchSPARC(input)},
 /*LZMA*/	{ id: XZ_FILTER.LZMA, 	handler: (input, props, outSize) => lzma.decompress(props, input, outSize)},
 /*LZMA2*/	{ id: XZ_FILTER.LZMA2, 	handler: (input, props) => lzma.decompress2(props, new lzma.BufferReader(input))},
 ];
@@ -52,7 +52,7 @@ const checks: {size: number, handle?: (x: Uint8Array) => number|bigint}[] = [
 	{size: 16,	},
 	{size: 32,	handle: x => {
 		const hash = crypto.createHash('sha256').update(x).digest();
-		return bin.typedArray.getBigUint(new DataView(hash.buffer, hash.byteOffset, hash.byteLength), 0, 32, true);
+		return bin.getBigUint(new DataView(hash.buffer, hash.byteOffset, hash.byteLength), 0, 32, true);
 	}},
 	{size: 32,	},
 	{size: 32,	},

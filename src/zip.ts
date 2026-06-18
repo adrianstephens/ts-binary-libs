@@ -153,7 +153,7 @@ const SIG = {
 const common_header = {
 	version:			bin.UINT16_LE,
 	flags:				bin.as(bin.UINT16_LE, bin.Flags(FLAGS, true)),
-	method:				bin.as(bin.UINT16_LE, i => i as METHOD),
+	method:				bin.as(bin.UINT16_LE, bin.EnumV(METHOD)),
 	mtime:				ZipTime,
 	crc:				bin.UINT32_LE,
 	compressed_size:	bin.UINT32_LE,

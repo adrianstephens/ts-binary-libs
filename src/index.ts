@@ -9,6 +9,7 @@ export * from './common';
 export * as zip from './zip';
 export * as tar from './tar';
 export * as sevenZ from './7z';
+export * as gguf from './gguf';
 
 bin.configureDecompression('deflate', buffer => new Promise((resolve, reject) => {
 	zlib.inflate(buffer, (err, result) => err ? reject(err) : resolve(result));
