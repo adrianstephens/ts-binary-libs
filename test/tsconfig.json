@@ -3,6 +3,7 @@
 	"compilerOptions": {
 		"outDir": ".",
 		"rootDir": ".",
+		"types": ["node"],
 		"plugins": []
 	},
 	"include": [

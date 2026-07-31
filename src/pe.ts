@@ -254,7 +254,7 @@ const DLLCHARACTERISTICS = {
 	NO_BIND:			   	0x0800,	// Do not bind the image
 	WDM_DRIVER:				0x2000,	// Driver uses WDM model
 	TERMINAL_SERVER_AWARE: 	0x8000,	// Terminal Server aware
-};
+} as const;
 
 const OPTIONAL_HEADER = {
 	Magic:						bin.as(uint16, bin.EnumString( MAGIC)),

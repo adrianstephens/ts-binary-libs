@@ -12,7 +12,6 @@
 		"sourceMap": true,
 		"outDir": "./dist",
 		"rootDir": "src",
-		"types": ["node"],
 		"plugins": [
 			{
 				"transform": "./node_modules/@isopodlabs/binary/scripts/transform.ts",
