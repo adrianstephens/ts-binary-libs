@@ -22,7 +22,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "../node_modules/.bin/tsc",
+		"build": "tsc -b .",
 		"watch": "tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
 		"link": "npm link @isopodlabs/binary",
