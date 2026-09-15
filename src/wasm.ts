@@ -2,17 +2,15 @@ import * as bin from '@isopodlabs/binary';
 
 // ===================================================================
 //  WebAssembly binary format: core spec + GC, bulk-memory, reference-types,
-//  multi-value, sign-extension, SIMD, threads/atomics (all stable in Wasm 2.0/3.0).
-//
-//  Not covered (throws rather than misparses): exception-handling (tag
-//  section, try/catch instructions).
+//  multi-value, sign-extension, SIMD, threads/atomics, exception-handling
+//  (all stable in Wasm 2.0/3.0). Exception-handling targets the current
+//  (exnref/try_table) proposal, not the deprecated legacy try/catch/delegate one.
 //
 //  Sync-only, like elf.ts/mach.ts: the instruction stream needs genuine
 //  recursive-descent (block/loop/if nest to a data-dependent depth, terminated
 //  by 0x0B/0x05, not a length prefix) -- hand-written, not declarative.
 // ===================================================================
 
-function inverse<K extends PropertyKey, V extends PropertyKey>(table: Record<K, V>) { return Object.fromEntries(Object.entries(table).map(([k, v]) => [v, k])) as Record<V, K>; }
 const UnreadString	= bin.Optional(false, bin.String(0));
 
 //-----------------------------------------------------------------------------
@@ -136,12 +134,21 @@ const ValType: bin.TypeT<ValType> = bin.as(RawType, v => {
 });
 export type ValType = NumTypeName | { ref: HeapType; nullable: boolean };
 
-const BlockType: bin.TypeT<BlockType> = bin.as(RawType, v => {
-	if (typeof v === 'string' && (v in STORAGE_ONLY))
-		throw new Error(`wasm: expected blocktype, got ${JSON.stringify(v)}`);
-	return v as BlockType;
-});
-export type BlockType = ValType | undefined | { typeIndex: number };
+// `RawType`'s own `number` case *is* the wire encoding for a type-index blocktype (a non-negative S33
+// value) -- but that collides with `BlockType`'s own TS shape for it, `{typeIndex: number}` (needed so
+// `{typeIndex}` doesn't get mistaken for a real numeric `HeapType`/type-index elsewhere BlockType might
+// flow). Wrap/unwrap at this boundary; `RawType.put`'s generic `typeof val === 'object'` branch is for
+// `ValType`'s `{ref, nullable}` shape and would otherwise silently corrupt a `{typeIndex}` value (reads
+// `.nullable`/`.ref`, both `undefined` on a typeIndex object) instead of writing the index.
+const BlockType: bin.TypeT<BlockType> = bin.as(RawType,
+	v => {
+		if (typeof v === 'string' && (v in STORAGE_ONLY))
+			throw new Error(`wasm: expected blocktype, got ${JSON.stringify(v)}`);
+		return typeof v === 'number' ? { typeIndex: v } : v as BlockType;
+	},
+	v => Array.isArray(v) ? v[0] : typeof v === 'object' && v !== null && 'typeIndex' in v ? v.typeIndex : v
+);
+export type BlockType = ValType | ValType[] | undefined | { typeIndex: number };
 
 //-----------------------------------------------------------------------------
 //	GC composite/sub/rec types (struct/array/func), for the type section
@@ -237,6 +244,7 @@ export const ROOT_OPS = {
 		0x0E: 'br_table', 0x11: 'call_indirect', 0x13: 'return_call_indirect', 0x1B: 'select', 0xD0: 'ref.null',
 		0x3F: 'memory.size', 0x40: 'memory.grow',
 		0x41: 'i32.const', 0x42: 'i64.const', 0x43: 'f32.const', 0x44: 'f64.const',
+		0x08: 'throw', 0x0A: 'throw_ref', 0x1F: 'try_table',
 	}
 } as const;
 
@@ -367,15 +375,17 @@ type Expand<T>		= T extends infer O ? { [K in keyof O]: O[K] } : never;
 function Expand<T>(x: T): Expand<T> { return x as Expand<T>; }
 
 type UnsignedAliases<T extends string> =
-	& {[K in T as K extends `i${infer Middle}_s` ? `i${Middle}` : never]:	K}
-	& {[K in T as K extends `i${infer Middle}_s` ? (`i${Middle}_u` extends T ? `u${Middle}` : never) : never]: K extends `i${infer Middle}_s` ? `i${Middle}_u` : never}
+	& {[K in T as K extends `${infer Start}i${infer Middle}_s` ? `${Start}i${Middle}` : never]:	K}
+	& {[K in T as K extends `${infer Start}i${infer Middle}_s` ? (`${Start}i${Middle}_u` extends T ? `${Start}u${Middle}` : never) : never]: K extends `${infer Start}i${infer Middle}_s` ? `${Start}i${Middle}_u` : never}
 
 function makeUnsignedAliases<T extends string>(OP: T[]) {
 	const alias: Record<string, any> = {};
+	const re = /^(.*)i(\d+(?:[._].*)?)_s$/;
 	for (const m of OP) {
-		if (m.endsWith('_s') && m[0] === 'i') {
-			alias[`${m.slice(0, -2)}`] = m;
-			alias[`u${m.slice(1, -2)}`] = m.slice(0, -2) + '_u';
+		const r = re.exec(m);
+		if (r)  {
+			alias[r[1]+'i'+r[2]] = m;
+			alias[r[1]+'u'+r[2]] = r[1]+'i'+r[2]+'_u';
 		}
 	}
 	return alias as UnsignedAliases<T>;
@@ -441,6 +451,15 @@ function mapTable<T extends Record<number, string>, R extends bin.Type>(table: T
 	};
 }
 
+// `try_table`'s catch clauses (exception-handling proposal): tag-typed or catch-all, each optionally re-pushing the exnref (`_ref` variants).
+const CatchClause = bin.Switch(bin.UINT8, {
+	0x00: makeInstr('catch',			{ tagIndex: Index, label: Index }),
+	0x01: makeInstr('catch_ref',		{ tagIndex: Index, label: Index }),
+	0x02: makeInstr('catch_all',		{ label: Index }),
+	0x03: makeInstr('catch_all_ref',	{ label: Index }),
+}, v => v.op === 'catch' ? 0x00 : v.op === 'catch_ref' ? 0x01 : v.op === 'catch_all' ? 0x02 : 0x03);
+export type CatchClause = bin.ReadType<typeof CatchClause>;
+
 const Instr = bin.Switch(bin.UINT8, {
 	0x02:	makeInstr('block',	{ blockType: BlockType, body: Block, label: UnreadString }),
 	0x03:	makeInstr('loop',	{ blockType: BlockType, body: Block, label: UnreadString }),
@@ -454,6 +473,9 @@ const Instr = bin.Switch(bin.UINT8, {
 	}),
 	0x05:	makeInstr('else_marker', {}),
 	0x0b:	makeInstr('end_block', {}),
+	0x08:	makeInstr('throw',		{ tagIndex: Index }),
+	0x0A:	makeInstr('throw_ref', {}),
+	0x1F:	makeInstr('try_table',	{ blockType: BlockType, catches: bin.Array(U32, CatchClause), body: Block, label: UnreadString }),
 	0x0E:	makeInstr('br_table',		{ labels: bin.Array(U32, Index), default: Index }),
 	0x11:	makeInstr('call_indirect',	{ typeIndex: Index, tableIndex: U32 }),
 	0x13:	makeInstr('return_call_indirect',	{ typeIndex: Index, tableIndex: Index }),
@@ -541,10 +563,10 @@ const Limits = bin.Switch(bin.UINT8, {
 	3: { min: U32, max: U32, shared: bin.Const(true) },
 	default: bin.Func((): never => { throw new Error('wasm: memory64/unrecognised limits flags are not supported'); }),
 }, v => 'shared' in v ? 3 : 'max' in v ? 1 : 0);
-const MemType = Limits;
 export type Limits = bin.ReadType<typeof Limits>;
 
-const TableType = { reftype: RawType,
+const TableType = {
+	reftype:	RawType,
 	_: bin.If(s => s.lookupObj('reftype') === undefined, {
 		reftype: bin.AfterSkip(2, ValType),
 		limits: Limits,
@@ -558,11 +580,23 @@ export type TableType = bin.ReadType<typeof TableType>;
 const GlobalType = { type: ValType, mut: bin.as(bin.UINT8, x => !!x, x => x ? 1 : 0) };
 export type GlobalType = bin.ReadType<typeof GlobalType>;
 
+// `attribute` is always 0 ("exception") per spec -- reserved for future tag kinds.
+const TagType = { attribute: bin.UINT8, typeIndex: Index };
+export type TagType = bin.ReadType<typeof TagType>;
+
 //-----------------------------------------------------------------------------
 //	sections
 //-----------------------------------------------------------------------------
 
+function WithIds<T>(t: bin.TypeT<T[]> ) {
+	return t as bin.TypeT<(T & {id?: string})[]>;
+}
+
 const Name = bin.String(U32, 'utf8');
+
+// ---- custom (0) ----
+
+const CustomSection = { name: Name, data: bin.RemainingBuffer() };
 
 // ---- type (1) ----
 
@@ -583,37 +617,43 @@ const TypeSection = bin.as(bin.Array(U32, RecType),
 
 // ---- import (2) ----
 
+// `id` on 'func'/'global' is a direct field (nothing else already carries one); 'table'/'memory' get
+// theirs from their own `TableType`/`MemType` (also used standalone in the table/memory sections, so
+// carrying `id` there covers both); 'tag' gets one from its `...TagType` spread. All four shapes are
+// resolved uniformly by `WasmModule.resolve()`'s `importId` helper.
 const ImportDesc = bin.Switch(bin.UINT8, {
-	0x00: { kind: bin.Const('func'),	typeIndex: U32 },
-	0x01: { kind: bin.Const('table'),	type: TableType},
-	0x02: { kind: bin.Const('memory'),	type: MemType },
-	0x03: { kind: bin.Const('global'),	type: GlobalType },
-	0x04: { kind: bin.Const('tag'),		attribute: bin.UINT8, typeIndex: U32 },
+	0x00: { kind: bin.Const('func'),	typeIndex: Index	},
+	0x01: { kind: bin.Const('table'),	type: TableType		},
+	0x02: { kind: bin.Const('memory'),	type: Limits		},
+	0x03: { kind: bin.Const('global'),	type: GlobalType	},
+	0x04: { kind: bin.Const('tag'),		...TagType			},
 }, (v: any) => v.kind === 'func' ? 0x00 : v.kind === 'table' ? 0x01 : v.kind === 'memory' ? 0x02 : v.kind === 'global' ? 0x03 : 0x04);
+
 const Import		= { module: Name, name: Name, desc: ImportDesc };
 export type Import	= bin.ReadType<typeof Import>;
-const ImportSection = bin.Array(U32, Import);
+const ImportSection = WithIds(bin.Array(U32, Import));
+
 
 // ---- function (3) ----
 
-const FunctionSection = bin.Array(U32, U32);
+const FunctionSection = bin.Array(U32, Index);
 
 // ---- table (4) ----
 
-const TableSection	= bin.Array(U32, TableType);
+const TableSection	= WithIds(bin.Array(U32, TableType));
 
 // ---- memory (5) ----
 
-const MemorySection = bin.Array(U32, MemType);
+const MemorySection = WithIds(bin.Array(U32, Limits));
 
 // ---- global (6) ----
 
-const Global		= { type: GlobalType, init: Expr, id: UnreadString };
-const GlobalSection	= bin.Array(U32, Global);
+const Global		= { type: GlobalType, init: Expr };
+const GlobalSection	= WithIds(bin.Array(U32, Global));
 
 // ---- export (7) ----
 
-const EXPORT_KIND = ['func', 'table', 'memory', 'global'] as const;
+const EXPORT_KIND = ['func', 'table', 'memory', 'global', 'tag'] as const;
 const Export = {
 	name: Name,
 	kind: bin.as(bin.UINT8,
@@ -625,14 +665,14 @@ const Export = {
 		},
 		(kind: typeof EXPORT_KIND[number]) => EXPORT_KIND.indexOf(kind)
 	),
-	index: U32
+	index: Index
 };
 export type Export	= bin.ReadType<typeof Export>;
 const ExportSection = bin.Array(U32, Export);
 
 // ---- start (8) ----
 
-const StartSection = U32;
+const StartSection = Index;
 
 // ---- element (9) ----
 
@@ -642,7 +682,7 @@ const FUNCREF = { ref: 'func', nullable: true } as const;
 
 export type ElementSegment = ({
 	mode: "active";
-	table: number;
+	table: Index;
 	offset: Instr[];
 } | {
 	mode: "passive" | "declarative";
@@ -652,7 +692,7 @@ export type ElementSegment = ({
 		nullable: true;
 	}
 } & ({
-	funcIndices: number[];
+	funcIndices: Index[];
 } | {
 	init: Instr[][]
 });
@@ -683,13 +723,13 @@ const ElemSegment: bin.TypeT<ElementSegment> = bin.Switch(U32, {
 	return ((v.table ?? 0) !== 0 ? 2 : 0) | (exprInit ? 4 : 0);
 });
 
-const ElementSection = bin.Array(U32, ElemSegment);
+const ElementSection = WithIds(bin.Array(U32, ElemSegment));
 
 // ---- code (10) ----
 
 const Local			= { count: U32, type: ValType, id: UnreadString };
-const FuncBody		= { locals: bin.Array(U32, Local), body: Expr, id: UnreadString };
-const CodeSection	= bin.Array(U32, bin.Size(U32, FuncBody));
+const FuncBody		= { locals: bin.Array(U32, Local), body: Expr };
+const CodeSection	= WithIds(bin.Array(U32, bin.Size(U32, FuncBody)));
 export type Local 	= bin.ReadType<typeof Local>;
 export type FuncBody = bin.ReadType<typeof FuncBody>;
 
@@ -697,7 +737,7 @@ export type FuncBody = bin.ReadType<typeof FuncBody>;
 
 export type DataSegment = ({
 	mode: "active";
-	memory?: number;
+	memory?: Index;
 	offset: (Instr)[];
 } | {
 	mode: "passive";
@@ -710,11 +750,11 @@ const DataSegment: bin.TypeT<DataSegment> = bin.Switch(U32, {
 	1: bin.as({ bytes: bin.Buffer(U32) },								p => ({ mode: 'passive' as const, bytes: p.bytes })),
 	2: bin.as({ memory: U32, offset: Expr, bytes: bin.Buffer(U32) },	p => ({ mode: 'active' as const, memory: p.memory, offset: p.offset, bytes: p.bytes })),
 }, v => v.mode === 'passive' ? 1 : 'memory' in v ? 2 : 0);
-const DataSection = bin.Array(U32, DataSegment);
+const DataSection = WithIds(bin.Array(U32, DataSegment));
 
-// ---- custom (0) ----
+// ---- tag (13) ----
 
-const CustomSection = { name: Name, data: bin.RemainingBuffer() };
+const TagSection	= WithIds(bin.Array(U32, TagType));
 
 //-----------------------------------------------------------------------------
 //	module
@@ -730,7 +770,7 @@ const WasmSpec = {
 	_:	bin.Merge(bin.RemainingRepeat({
 		id:		bin.UINT8,
 		_: bin.Merge(bin.Size(U32, bin.Switch(s => s.lookupObj('id'), {
-				0:		{ customSections:	CustomSection		},
+				0:		{ customSections:	bin.Array(1, CustomSection)	},	//Array so they merge
 				1:		{ types:			TypeSection			},
 				2:		{ imports:			ImportSection		},
 				3:		{ functionTypes:	FunctionSection		},
@@ -738,30 +778,15 @@ const WasmSpec = {
 				5:		{ memories:			MemorySection		},
 				6:		{ globals:			GlobalSection		},
 				7:		{ exports:			ExportSection		},
-				8:		{ start:			U32					},
+				8:		{ start:			StartSection		},
 				9:		{ elements:			ElementSection		},
 				10:		{ code:				CodeSection			},
 				11:		{ datas:			DataSection			},
-				12:		{ dataCount:		U32	},
+				12:		{ dataCount:		U32					},
+				13:		{ tags:				TagSection			},
 				default:	{ unknown: bin.RemainingBuffer() }
 		})))
-	}/*, (_, x) => {
-		return [
-			x.types,
-			x.imports,
-			x.functionTypes,
-			x.tables,
-			x.memories,
-			x.globals,
-			x.exports,
-			x.start,
-			x.elements,
-			x.dataCount,
-			x.code,
-			x.datas,
-			x.customSections,
-		] as any[];
-	}*/))
+	}))
 };
 
 export type WasmModuleData = bin.ReadType<typeof WasmSpec>;
@@ -786,19 +811,22 @@ export class WasmModule extends bin.Class(WasmSpec) {
 		bin.UINT32_LE.put(s, VERSION);
 		const id = (n: number) => bin.UINT8.put(s, n);
 
-		if (this.types)					{ id(1); bin.Size(U32, TypeSection).put(s, this.types); }
-		if (this.imports)				{ id(2); bin.Size(U32, ImportSection).put(s, this.imports); }
-		if (this.functionTypes)			{ id(3); bin.Size(U32, FunctionSection).put(s, this.functionTypes); }
-		if (this.tables)				{ id(4); bin.Size(U32, TableSection).put(s, this.tables); }
-		if (this.memories)				{ id(5); bin.Size(U32, MemorySection).put(s, this.memories); }
-		if (this.globals)				{ id(6); bin.Size(U32, GlobalSection).put(s, this.globals); }
-		if (this.exports)				{ id(7); bin.Size(U32, ExportSection).put(s, this.exports); }
-		if (this.start !== undefined)	{ id(8); bin.Size(U32, StartSection).put(s, this.start); }
-		if (this.elements)				{ id(9); bin.Size(U32, ElementSection).put(s, this.elements); }
-		if (this.datas) 				{ id(12); bin.Size(U32, U32).put(s, this.datas.length); }
-		if (this.code)					{ id(10); bin.Size(U32, CodeSection).put(s, this.code); }
-		if (this.datas)					{ id(11); bin.Size(U32, DataSection).put(s, this.datas); }
-		if (this.customSections)		{ id(0); bin.Size(U32, CustomSection).put(s, this.customSections); }
+		if (this.types)					{ id(1); 	bin.Size(U32, TypeSection).put(s, this.types); }
+		if (this.imports)				{ id(2); 	bin.Size(U32, ImportSection).put(s, this.imports); }
+		if (this.functionTypes)			{ id(3); 	bin.Size(U32, FunctionSection).put(s, this.functionTypes); }
+		if (this.tables)				{ id(4); 	bin.Size(U32, TableSection).put(s, this.tables); }
+		if (this.memories)				{ id(5); 	bin.Size(U32, MemorySection).put(s, this.memories); }
+		if (this.tags)					{ id(13); 	bin.Size(U32, TagSection).put(s, this.tags); }
+		if (this.globals)				{ id(6); 	bin.Size(U32, GlobalSection).put(s, this.globals); }
+		if (this.exports)				{ id(7); 	bin.Size(U32, ExportSection).put(s, this.exports); }
+		if (this.start !== undefined)	{ id(8); 	bin.Size(U32, StartSection).put(s, this.start); }
+		if (this.elements)				{ id(9); 	bin.Size(U32, ElementSection).put(s, this.elements); }
+		if (this.datas) 				{ id(12); 	bin.Size(U32, U32).put(s, this.datas.length); }
+		if (this.code)					{ id(10); 	bin.Size(U32, CodeSection).put(s, this.code); }
+		if (this.datas)					{ id(11); 	bin.Size(U32, DataSection).put(s, this.datas); }
+		for (const c of this.customSections ?? []) { 
+			id(0); bin.Size(U32, CustomSection).put(s, c);
+		}
 	}
 
 	toBytes(): Uint8Array {
@@ -807,11 +835,151 @@ export class WasmModule extends bin.Class(WasmSpec) {
 		return s.terminate();
 	}
 
+	// Resolves every `$name`/index still pending across the whole module
+	// A caller (e.g. `wat-parser.ts`) can build a module with plain `$name` strings anywhere an index goes and just call this once at the end
+	resolve(): void {
+		class IDTable {
+			ids: Record<string, number> = {};
+			num = 0;
+			// Only the `type` table below passes a `passthrough` set: a heap type position (`ref.test`'s
+			// `typeIndex`, `br_on_cast`'s `from`/`to`, a `ValType`'s own `ref`, ...) can hold an abstract
+			// name like 'func'/'i31' instead of an actual type-index reference.
+			constructor(private passthrough?: ReadonlySet<string>) {}
+			add(id: string | undefined, count = 1) {
+				if (id !== undefined)
+					this.ids[id] = this.num;
+				this.num += count;
+			}
+			res(v: any): number {
+				if (typeof v === 'number')
+					return v;
+				if (this.passthrough?.has(v))
+					return v;
+				if (v && this.ids[v] !== undefined)
+					return this.ids[v];
+				throw new Error(`no such id: ${v}`);
+			}
+		}
+
+		// Imports occupy the low end of each kind's index space, ahead of the section's own entries.
+		// Each kind's `id` lives in a different spot on its `ImportDesc` variant (see that type's own
+		// comment) -- normalize it here rather than at every call site below.
+		const importId = (desc: any): string | undefined => 'type' in desc ? desc.type.id : desc.id;
+		const idTable = (kind: string, own?: {id?: string}[]) => {
+			const t = new IDTable;
+			for (const imp of this.imports ?? [])
+				if (imp.desc.kind === kind)
+					t.add(importId(imp.desc));
+			for (const v of own ?? [])
+				t.add(v.id);
+			return t;
+		};
+
+		const type		= new IDTable(new Set(Object.keys(ABSTRACT_HEAP)));
+		const typesList	= this.types?.types ?? [];
+		for (const t of typesList)
+			type.add(t.id);
+
+		const func		= idTable('func', this.code);
+		const table		= idTable('table', this.tables);
+		const memory	= idTable('memory', this.memories);
+		const global	= idTable('global', this.globals);
+		const tag		= idTable('tag', this.tags);
+		const element	= new IDTable;
+		for (const e of this.elements ?? [])
+			element.add((e as any).id);
+		const data		= new IDTable;
+		for (const d of this.datas ?? [])
+			data.add((d as any).id);
+
+		function resolveValType(v: any): any {
+			return typeof v === 'object' ? { ref: type.res(v.ref), nullable: v.nullable } : v;
+		}
+		function resolveFieldType(f: FieldType): FieldType {
+			return { type: resolveValType(f.type), mut: f.mut };
+		}
+		function resolveCompType(c: CompType): CompType {
+			switch (c.kind) {
+				case 'func':	return { kind: 'func', params: c.params.map(p => ({ ...p, type: resolveValType(p.type) })), results: c.results.map(resolveValType) };
+				case 'struct':	return { kind: 'struct', fields: c.fields.map(resolveFieldType) };
+				case 'array':	return { kind: 'array', field: resolveFieldType(c.field) };
+			}
+		}
+
+		// --- type section: supertypes + nested heap types ---
+		if (this.types) {
+			this.types.types = typesList.map(t => 'supertypes' in t
+				? { ...t, supertypes: t.supertypes.map(s => type.res(s)), type: resolveCompType(t.type) }
+				: { ...t, ...resolveCompType(t) }
+			);
+		}
+
+		// --- tables / globals ---
+		for (const t of this.tables ?? [])
+			if (t.reftype !== undefined)
+				t.reftype = resolveValType(t.reftype);
+		for (const g of this.globals ?? [])
+			g.type.type = resolveValType(g.type.type);
+
+		// --- func/tag type-index references (own entries + imports) ---
+		this.functionTypes = (this.functionTypes ?? []).map(t => type.res(t));
+		for (const t of this.tags ?? [])
+			t.typeIndex = type.res(t.typeIndex);
+		for (const imp of this.imports ?? [])
+			if ('typeIndex' in imp.desc)
+				(imp.desc as any).typeIndex = type.res(imp.desc.typeIndex);
+
+		const r: Resolver = { type, element, data, func, table, memory, global, tag, local: new IDTable, typesList: this.types?.types ?? [] };
+
+		// --- functions: locals (params first, same index space) + body ---
+		(this.code ?? []).forEach((body, i) => {
+			const local		= new IDTable;
+			const st		= r.typesList[this.functionTypes![i] as number];
+			const ct		= st && ('supertypes' in st ? st.type : st);
+			if (ct && ct.kind === 'func')
+				ct.params.forEach(p => local.add(p.id));
+			body.locals.forEach(l => local.add(l.id, l.count));
+			body.locals = body.locals.map(l => ({ ...l, type: resolveValType(l.type) }));
+			body.body = resolveInstructions({ ...r, local }, body.body);
+		});
+
+		// --- constant expressions: global inits, elem/data offsets (no locals in scope) ---
+		for (const g of this.globals ?? [])
+			g.init = resolveInstructions(r, g.init);
+
+		for (const e of this.elements ?? []) {
+			if ('offset' in e && e.offset)
+				e.offset = resolveInstructions(r, e.offset);
+			if ('init' in e && e.init)
+				e.init = e.init.map(expr => resolveInstructions(r, expr));
+		}
+		for (const d of this.datas ?? [])
+			if (d.mode === 'active')
+				d.offset = resolveInstructions(r, d.offset);
+
+		// --- exports / start / elem table+funcs / data memory ---
+		for (const e of this.exports ?? [])
+			e.index = (r as any)[e.kind].res(e.index);
+
+		if (this.start !== undefined)
+			this.start = func.res(this.start);
+		
+		for (const e of this.elements ?? []) {
+			if ('table' in e && e.table !== undefined)
+				e.table = table.res(e.table);
+			if ('funcIndices' in e)
+				e.funcIndices = e.funcIndices.map(fi => func.res(fi));
+		}
+		for (const d of this.datas ?? [])
+			if (d.mode === 'active' && d.memory !== undefined)
+				d.memory = memory.res(d.memory);
+	}
+
 	toWAT(options?: { expandTypes?: boolean; hexFloats?: boolean }): string {
 		// --- value/heap type helpers ---
 		const ht = (h: HeapType)					=> typeof h === 'number' ? String(h) : h;
 		const vt = (t: StorageType)					=> typeof t === 'string' ? t : `(ref${t.nullable ? ' null' : ''} ${ht(t.ref)})`;
-		const bt = (b: BlockType, label?: string)	=> (label ? ' ' + label : '') + (b === undefined ? '' : typeof b === 'object' && 'typeIndex' in b ? ` (type ${b.typeIndex})` : ` (result ${vt(b)})`);
+		const bt = (b: BlockType, label?: string)	=> (label ? ' ' + label : '') + (b === undefined ? '' : Array.isArray(b) ? ` (result ${b.map(vt).join(' ')})` : typeof b === 'object' && 'typeIndex' in b ? ` (type ${b.typeIndex})` : ` (result ${vt(b)})`);
 		const limits = (l: Limits): string			=> 'max' in l ? `${l.min} ${l.max}` : String(l.min);
 		const maybeid = (x?: { id?: string })		=> x?.id ? ' ' + x.id : '';
 
@@ -856,35 +1024,22 @@ export class WasmModule extends bin.Class(WasmSpec) {
 
 		const renderInstr = (i: Instr, locals: Local[]): string => {
 			switch (i.op) {
-				case 'i32.const': return `i32.const ${i.imm}`;
-				case 'i64.const': return `i64.const ${i.imm}`;
 				case 'f32.const': return `f32.const ${f32str(i.imm)}`;
 				case 'f64.const': return `f64.const ${f64str(i.imm)}`;
 				case 'v128.const': return `v128.const i8x16 ${Array.from(i.imm).join(' ')}`;
 				case 'i8x16.shuffle': return `i8x16.shuffle ${(i.imm).join(' ')}`;
-				case 'local.get': case 'local.set': case 'local.tee': return `${i.op} ${loc(i.localIndex, locals)}`;
-				case 'global.get': case 'global.set': return `${i.op} ${i.globalIndex}`;
-				case 'table.get': case 'table.set': case 'table.grow': case 'table.size': case 'table.fill': return `${i.op} ${i.tableIndex}`;
-				case 'call': case 'return_call': case 'ref.func': case 'call_ref': case 'return_call_ref': return `${i.op} ${funcRef(i.funcIndex)}`;
-				case 'br': case 'br_if': case 'br_on_null': case 'br_on_non_null': return `${i.op} ${i.label}`;
 				case 'br_table': return `br_table ${(i.labels).join(' ')} ${i.default}`;
-				case 'call_indirect': case 'return_call_indirect': return `${i.op} ${i.typeIndex} ${i.tableIndex}`;
 				case 'select': return 'imm' in i && i.imm ? `select (result ${i.imm.map(vt).join(' ')})` : 'select';
 				case 'ref.null': return `ref.null ${ht(i.typeIndex)}`;
 				case 'ref.test': case 'ref.cast': return `${i.op} ${i.nullable ? '(ref null ' : '(ref '}${ht(i.typeIndex)})`;
 				case 'memory.size': case 'memory.grow': return i.op;
 				case 'memory.init': case 'table.init': return `${i.op} ${i.seg} ${i.target}`;
 				case 'memory.copy': case 'table.copy': return `${i.op} ${i.seg} ${i.target}`;
-				case 'memory.fill': return 'memory.fill';
-				case 'data.drop': return `data.drop ${i.dataIndex}`;
-				case 'elem.drop': return `elem.drop ${i.elemIndex}`;
+				case 'throw': return `throw ${i.tagIndex}`;
 				case 'struct.get': case 'struct.get_s': case 'struct.get_u': case 'struct.set': return `${i.op} ${i.typeIndex} ${i.field}`;
 				case 'array.new_fixed': return `array.new_fixed ${i.typeIndex} ${i.n}`;
-				case 'array.new_data': case 'array.init_data': return `${i.op} ${i.typeIndex} ${i.dataIndex}`;
-				case 'array.new_elem': case 'array.init_elem': return `${i.op} ${i.typeIndex} ${i.elemIndex}`;
 				case 'array.copy': return `array.copy ${i.dst} ${i.src}`;
 				case 'br_on_cast': case 'br_on_cast_fail': return `${i.op} ${i.label} (ref${i.flags & 1 ? ' null' : ''} ${ht(i.from)}) (ref${i.flags & 2 ? ' null' : ''} ${ht(i.to)})`;
-				case 'atomic.fence': return 'atomic.fence';
 				default: {
 					// memory ops (align/offset) and lane ops
 					const parts: string[] = [i.op];
@@ -901,6 +1056,25 @@ export class WasmModule extends bin.Class(WasmSpec) {
 						else
 							parts.push(String(i.typeIndex));
 					}
+					if ('imm' in i)
+						parts.push(String(i.imm));
+					if ('label' in i)
+						parts.push(String(i.label));
+					if ('typeIndex' in i)
+						parts.push(String(i.typeIndex));
+					if ('localIndex' in i)
+						parts.push(loc(i.localIndex, locals));
+					if ('globalIndex' in i)
+						parts.push(String(i.globalIndex));
+					if ('tableIndex' in i)
+						parts.push(String(i.tableIndex));
+					if ('funcIndex' in i)
+						parts.push(funcRef(i.funcIndex));
+					if ('dataIndex' in i)
+						parts.push(String(i.dataIndex));
+					if ('elemIndex' in i)
+						parts.push(String(i.elemIndex));
+
 					return parts.join(' ');
 				}
 			}
@@ -920,6 +1094,14 @@ export class WasmModule extends bin.Class(WasmSpec) {
 						out.push(`${pad}else`);
 						emit(i.else as Instr[], locals, depth + 1, out);
 					}
+					out.push(`${pad}end`);
+				} else if (i.op === 'try_table') {
+					const catches = (i.catches as CatchClause[]).map(c => c.op === 'catch_all' || c.op === 'catch_all_ref'
+						? `(${c.op} ${c.label})`
+						: `(${c.op} ${c.tagIndex} ${c.label})`
+					).join(' ');
+					out.push(`${pad}try_table${bt(i.blockType, i.label)}${catches ? ' ' + catches : ''}`);
+					emit(i.body as Instr[], locals, depth + 1, out);
 					out.push(`${pad}end`);
 				} else {
 					out.push(`${pad}${renderInstr(i, locals)}`);
@@ -951,7 +1133,7 @@ export class WasmModule extends bin.Class(WasmSpec) {
 				case 'table':	s = `(table ${limits(d.type.limits)} ${vt(d.type.reftype!)})`; break;
 				case 'memory':	s = `(memory ${limits(d.type)})`; break;
 				case 'global':	s = `(global ${d.type.mut ? `(mut ${vt(d.type.type)})` : vt(d.type.type)})`; break;
-				default:		s = `(${d.kind})`; break;
+				case 'tag':		s = `(tag (type ${d.typeIndex}))`; break;
 			}
 			lines.push(`  (import "${imp.module}" "${imp.name}" ${s})`);
 		}
@@ -973,6 +1155,10 @@ export class WasmModule extends bin.Class(WasmSpec) {
 		for (const m of this.memories ?? [])
 			lines.push(`  (memory ${limits(m)})`);
 
+		// --- tags ---
+		for (const t of this.tags ?? [])
+			lines.push(`  (tag (type ${t.typeIndex}))`);
+
 		// --- globals ---
 		for (const g of this.globals ?? []) {
 			const initLines: string[] = [];
@@ -985,30 +1171,18 @@ export class WasmModule extends bin.Class(WasmSpec) {
 		// --- functions ---
 		const numImportedFuncs = (this.imports ?? []).filter(i => i.desc.kind === 'func').length;
 
-		const getsig = (t: number) => {
-			const st = this.types?.types[t];
-			if (st) {
-				const ct = 'supertypes' in st ? st.type : st;
-				if (ct.kind === 'func')
-					return ct;
-			}
+		const getsig = (st: SubType) => {
+			const ct = 'supertypes' in st ? st.type : st;
+			if (ct.kind === 'func')
+				return ct;
 		};
 
 		(this.functionTypes ?? []).forEach((t, i) => {
-			const sig = getsig(t);
-			let sigStr = sig && options?.expandTypes ? funcSig(sig.params, sig.results) : `(type ${t})`;
-
-			const code = this.code?.[i];
-			lines.push(`  (func${maybeid(code)} (;${numImportedFuncs + i};) ${sigStr}`);
+			const st	= this.types?.types[t as number];
+			const sig	= st && getsig(st);
+			const code	= this.code?.[i];
+			lines.push(`  (func${maybeid(code)} (;${numImportedFuncs + i};) ${sig && options?.expandTypes ? funcSig(sig.params, sig.results) : `(type ${t})`}`);
 			if (code) {
-				const st = this.types?.types[t];
-				if (st) {
-					const ct = 'supertypes' in st ? st.type : st;
-					if (ct.kind === 'func')
-						sigStr = funcSig(ct.params, ct.results);
-				}
-
-
 				for (const l of code.locals)
 					lines.push(`    (local${maybeid(l)}${Array(l.count).fill(` ${vt(l.type)}`).join('')})`);
 				emit(code.body, [...(sig?.params.map(p => ({ count: 1, ...p })) || []), ...code.locals], 2, lines);
@@ -1060,6 +1234,108 @@ export class WasmModule extends bin.Class(WasmSpec) {
 	}
 }
 
+interface ResolverTable {
+	res(v: any): number;
+}
+export interface Resolver {
+	type:		ResolverTable;
+	element:	ResolverTable;
+	data:		ResolverTable;
+	func:		ResolverTable;
+	table:		ResolverTable;
+	memory:		ResolverTable;
+	global:		ResolverTable;
+	tag:		ResolverTable;
+	local: 		ResolverTable;
+	typesList:	SubType[];
+}
+
+export function getFuncTypeIdx(typesList: SubType[], sig: FuncSig): number {
+	const idx = typesList.findIndex(t => 'kind' in t && t.kind === 'func' && equalFuncSig(t, sig));
+	return idx < 0 ? typesList.push({kind: 'func', ...sig}) - 1 : idx;
+}
+
+export function resolveInstructions(r: Resolver, instrs: Instr[]): Instr[] {
+
+	function resolveField(i: any, name: string, table: ResolverTable) {
+		if (name in i)
+			i[name]	= table.res(i[name]);
+	}
+	// A caller (e.g. a named/self-referencing struct/array type) may still have an unresolved heap
+	// type sitting in one of these `ValType`s -- resolve each through `r.type`, same table `typeIndex`/
+	// `from`/`to` already go through below, before collapsing the array into the final `BlockType`.
+	function resolveValType(v: ValType): ValType {
+		return typeof v === 'object' ? { ref: r.type.res(v.ref), nullable: v.nullable } : v;
+	}
+	function resolveBlockType(bt: BlockType) {
+		if (!Array.isArray(bt))
+			return bt;
+		const results = bt.map(resolveValType);
+		return results.length === 0 ? undefined
+			: results.length === 1 ? results[0]
+			: { typeIndex: getFuncTypeIdx(r.typesList, { params: [], results }) };
+	}
+
+	function resolveInstr(i: Instr, stk: (string | undefined)[]): Instr {
+		const op		= i.op;
+		const labels	= { res: (v: any) => {
+			if (typeof v === 'number')
+				return v;
+			const i = stk.lastIndexOf(v);
+			return i >= 0 ? stk.length - 1 - i : (v ? parseInt(String(v).replace(/^\$/, '')) || 0 : 0);
+		}};
+		switch (op) {
+			case 'block': case 'loop': case 'if': {
+				const newStk	= [...stk, i.label];
+				const blockType = resolveBlockType(i.blockType);
+				return op === 'if'
+					? {op, blockType, then: recurse(i.then as Instr[], newStk), else: i.else && recurse(i.else as Instr[], newStk), label: i.label}
+					: {op, blockType, body: recurse(i.body as Instr[], newStk), label: i.label};
+			}
+			case 'br_table':		return {...i, labels: i.labels.map(l => labels.res(l)), default: labels.res(i.default) };
+			case 'br_on_cast':
+			case 'br_on_cast_fail':	return {...i, label: labels.res(i.label), from: r.type.res(i.from), to: r.type.res(i.to) };
+			case 'memory.init':		return {...i, seg: r.data.res(i.seg), target: r.memory.res(i.target)};
+			case 'memory.copy':
+			case 'memory.fill':		return {...i, seg: r.memory.res(i.seg), target: r.memory.res(i.target)};
+			case 'table.init':		return {...i, seg: r.element.res(i.seg), target: r.table.res(i.target)};
+			case 'table.copy':		return {...i, seg: r.table.res(i.seg), target: r.table.res(i.target)};
+
+			case 'try_table': {
+				return {
+					op, label:	i.label,
+					blockType:	resolveBlockType(i.blockType),
+					catches:	i.catches.map(c => c.op === 'catch_all' || c.op === 'catch_all_ref'
+						? { ...c, label: labels.res(c.label) }
+						: { ...c, tagIndex: r.tag.res(c.tagIndex), label: labels.res(c.label) }
+					),
+					body: recurse(i.body as Instr[], [...stk, i.label]),
+				};
+			}
+
+			default: {
+				const resI = { ...i };
+				resolveField(resI, 'localIndex',	r.local);
+				resolveField(resI, 'label',			labels);
+				resolveField(resI, 'globalIndex',	r.global);
+				resolveField(resI, 'tableIndex',	r.table);
+				resolveField(resI, 'funcIndex', 	r.func);
+				resolveField(resI, 'typeIndex',		r.type);
+				resolveField(resI, 'dst',			r.type);
+				resolveField(resI, 'src',			r.type);
+				resolveField(resI, 'elemIndex',		r.element);
+				resolveField(resI, 'dataIndex',		r.data);
+				resolveField(resI, 'tagIndex',		r.tag);
+				return resI;
+			}
+		}
+	}
+
+	function recurse(instrs: Instr[], stk: (string | undefined)[] = []): Instr[] {
+		return instrs.map(i => resolveInstr(i, stk));
+	}
+	return recurse(instrs);
+}
 
 //-----------------------------------------------------------------------------
 //	hand-authoring helpers
@@ -1207,20 +1483,39 @@ const I0 = new TreeBuilder({})
 	.one('elem.drop', 				(elemIndex: Index) => ({ op: 'elem.drop' as const, elemIndex }))
 	.one('atomic.fence',			{ op: 'atomic.fence' as const })
 	.one('v128.const',				(imm: Uint8Array) => ({ op: 'v128.const' as const, imm }))
-	.one('i8x16.shuffle',			(imm: number[]) => ({ op: 'i8x16.shuffle' as const, imm }));
+	.one('i8x16.shuffle',			(imm: number[]) => ({ op: 'i8x16.shuffle' as const, imm }))
+	.one('throw',					(tagIndex: Index) => ({ op: 'throw' as const, tagIndex }))
+	.one('throw_ref',				{ op: 'throw_ref' as const })
+	.one('try_table',				(blockType: BlockType | undefined, catches: CatchClause[], body: Instr[]) => ({ op: 'try_table' as const, blockType, catches, body }));
+
+// `try_table`'s catch clauses aren't instructions (no opcode of their own), so they sit outside the `I`/`fold` instruction tree.
+export const Catch = {
+	tag:	(tagIndex: Index, label: Index): CatchClause => ({ op: 'catch', tagIndex, label }),
+	tagRef:	(tagIndex: Index, label: Index): CatchClause => ({ op: 'catch_ref', tagIndex, label }),
+	all:	(label: Index): CatchClause => ({ op: 'catch_all', label }),
+	allRef:	(label: Index): CatchClause => ({ op: 'catch_all_ref', label }),
+};
 
 //export const I = I0.build();
 
 const I1 = I0.build();
 
-type Expr1<T> = Instr[];
-type Expr<T> = Instr[] | Instr;
+export type MaybeArray<T> = T | T[] | number;
+export type Expr1<T> = Instr[];
+export type Expr<T> = MaybeArray<Instr>;
 type i32 = number;
+type u32 = number;
+type i64 = bigint;
+type u64 = bigint;
+type f32 = number;
+type f64 = number;
 
 function flattenArgs(args: Expr<any>[]) {
 	const out: Instr[] = [];
 	for (const a of args)
-		if (Array.isArray(a))
+		if (typeof a === 'number')
+			out.push(I1.i32.const(a | 0));
+		else if (Array.isArray(a))
 			out.push(...a);
 		else
 			out.push(a);
@@ -1232,12 +1527,43 @@ export function fold<T>(instr: Instr, ...args: Expr<any>[]): Expr1<T> {
 }
 
 export const I = I0.more({
-	i32: Object.assign(function(imm: number)			{ return I1.i32.const(imm | 0); }, {
-		load:	(offset: Expr<i32>, arg?: MemArg )	=> fold<i32>(I1.i32.load(arg), offset)
+	i32: Object.assign(function(imm: number)		{ return I1.i32.const(imm | 0); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<i32>(I1.i32.load(arg), offset),
+		load8:	(offset: Expr<i32>, arg?: MemArg) => fold<i32>(I1.i32.load8_s(arg), offset),
+		load16:	(offset: Expr<i32>, arg?: MemArg) => fold<i32>(I1.i32.load16_s(arg), offset),
+		store:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i32.store(arg), offset),
+		store8:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i32.store8(arg), offset),
+		store16:(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i32.store16(arg), offset),
 	}),
-	i64: function(imm: number|bigint)	{ return I1.i64.const(BigInt(imm)); },
-	f32: function(imm: number)			{ return I1.f32.const(imm); },
-	f64: function(imm: number)			{ return I1.f64.const(imm); },
+	u32: Object.assign(function(imm: number)		{ return I1.i32.const(imm | 0); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<u32>(I1.i32.load(arg), offset),
+		load8:	(offset: Expr<i32>, arg?: MemArg) => fold<u32>(I1.i32.load8_u(arg), offset),
+		load16:	(offset: Expr<i32>, arg?: MemArg) => fold<u32>(I1.i32.load16_u(arg), offset),
+	}),
+	i64: Object.assign(function(imm: number|bigint)	{ return I1.i64.const(BigInt(imm)); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<i64>(I1.i64.load(arg), offset),
+		load8:	(offset: Expr<i32>, arg?: MemArg) => fold<i64>(I1.i64.load8_s(arg), offset),
+		load16:	(offset: Expr<i32>, arg?: MemArg) => fold<i64>(I1.i64.load16_s(arg), offset),
+		load32:	(offset: Expr<i32>, arg?: MemArg) => fold<i64>(I1.i64.load32_s(arg), offset),
+		store:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i64.store(arg), offset),
+		store8:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i64.store8(arg), offset),
+		store16:(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i64.store16(arg), offset),
+		store32:(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.i64.store32(arg), offset),
+	}),
+	u64: Object.assign(function(imm: number|bigint)	{ return I1.i64.const(BigInt(imm)); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<u64>(I1.i64.load(arg), offset),
+		load8:	(offset: Expr<i32>, arg?: MemArg) => fold<u64>(I1.i64.load8_u(arg), offset),
+		load16:	(offset: Expr<i32>, arg?: MemArg) => fold<u64>(I1.i64.load16_u(arg), offset),
+		load32:	(offset: Expr<i32>, arg?: MemArg) => fold<u64>(I1.i64.load32_u(arg), offset),
+	}),
+	f32: Object.assign(function(imm: number)		{ return I1.f32.const(imm); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<f32>(I1.f32.load(arg), offset),
+		store:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.f32.store(arg), offset),
+	}),
+	f64: Object.assign(function(imm: number)		{ return I1.f64.const(imm); }, {
+		load:	(offset: Expr<i32>, arg?: MemArg) => fold<f64>(I1.f64.load(arg), offset),
+		store:	(offset: Expr<i32>, arg?: MemArg) => fold<void>(I1.f64.store(arg), offset),
+	}),
 
 	// table(tableidx).op(named stack args...)
 	// Stack order per spec: table.get [i] -> val; table.set [i, x]; table.grow [x, n] -> old_sz;
@@ -1250,7 +1576,7 @@ export const I = I0.more({
 		fill:	(i: Expr<i32>, x: Expr<T>, n: Expr<i32>)						=> fold<void>(I1.table.fill(tableidx), i, x, n),
 		copy:	(dst: Expr<i32>, src: Expr<i32>, n: Expr<i32>, srctable: Index)	=> fold<void>(I1.table.copy(tableidx, srctable), dst, src, n),
 		init:	(dst: Expr<i32>, src: Expr<i32>, n: Expr<i32>, elemidx: Index)	=> fold<void>(I1.table.init(tableidx, elemidx), dst, src, n),
-		drop:	(elemidx: Index)												=> fold<void>(I1.elem.drop(elemidx)),
+		//drop:	(elemidx: Index)												=> fold<void>(I1.elem.drop(elemidx)),
 	}; },
 
 	// memory().op(named stack args...)
@@ -1261,34 +1587,39 @@ export const I = I0.more({
 		fill:	(dst: Expr<i32>, val: Expr<i32>, n: Expr<i32>)					=> fold<void>(I1.memory.fill(memidx, memidx), dst, val, n),
 		copy:	(dst: Expr<i32>, src: Expr<i32>, n: Expr<i32>)					=> fold<void>(I1.memory.copy(memidx, memidx), dst, src, n),
 		init:	(dst: Expr<i32>, src: Expr<i32>, n: Expr<i32>, dataidx: Index)	=> fold<void>(I1.memory.init(dataidx, memidx), dst, src, n),
-		drop:	(dataidx: Index)												=> fold<void>(I1.data.drop(dataidx)),
+		//drop:	(dataidx: Index)												=> fold<void>(I1.data.drop(dataidx)),
 	}; },
 
 	// array(typeIndex).op(named stack args...)
 	// Stack order per GC spec: array.new [n]; array.get [arr, i]; array.set [arr, i, x];
 	// array.fill [arr, i, x, n]; array.copy [dst, di, src, si, n]
-	array: function<T>(typeIndex: Index) { return {
-//		new:		(n: Expr<i32>)												=> fold<T>(I1.array.new(typeIndex), n),
-		new:		(n: Expr<i32>|number)										=> typeof n === 'number' ? I1.array.new_fixed(typeIndex, n) : fold<T>(I1.array.new(typeIndex), n),
-		new_default:(n: Expr<i32>)												=> fold<T>(I1.array.new_default(typeIndex), n),
-		new_fixed:	(...vals: Expr<T>[])										=> fold<T>(I1.array.new_fixed(typeIndex, vals.length), vals.flat()),
-		new_data:	(n: Expr<i32>, src: Expr<i32>, dataidx: Index)				=> fold<T>(I1.array.new_data(typeIndex, dataidx), n, src),
-		new_elem:	(n: Expr<i32>, src: Expr<i32>, elemidx: Index)				=> fold<T>(I1.array.new_elem(typeIndex, elemidx), n, src),
-		get:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get(typeIndex), arr, i),
-		get_s:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get_s(typeIndex), arr, i),
-		get_u:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get_u(typeIndex), arr, i),
-		set:		(arr: Expr<T[]>, i: Expr<i32>, x: Expr<T>)					=> fold<void>(I1.array.set(typeIndex), arr, i,	x),
-		fill:		(arr: Expr<T[]>, i: Expr<i32>, x: Expr<T>, n: Expr<i32>)	=> fold<void>(I1.array.fill(typeIndex), arr, i,	x,	n),
-		copy:		(dst: Expr<T[]>, di: Expr<i32>, src: Expr<T[]>, si: Expr<i32>, n: Expr<i32>)=> fold<void>(I1.array.copy(typeIndex, typeIndex), dst, di, src, si, n),
-		init_data:	(arr: Expr<T[]>, i: Expr<i32>, n: Expr<i32>, dataidx: Index)=> fold<void>(I1.array.init_data(typeIndex, dataidx), arr, i, n),
-		init_elem:	(arr: Expr<T[]>, i: Expr<i32>, n: Expr<i32>, elemidx: Index)=> fold<void>(I1.array.init_elem(typeIndex, elemidx), arr, i, n),
-		len:		(arr: Expr<T[]>)											=> fold<i32>(I1.array.len, arr),
-	}; },
+	array: function<T>(typeIndex: Index) {
+		function new_(n: number): Instr;
+		function new_(n: Expr<i32>): Instr[];
+		function new_(n: Expr<i32>|number): Instr | Instr[]					{ return typeof n === 'number' ? I1.array.new_fixed(typeIndex, n) : fold<T>(I1.array.new(typeIndex), n); }
+
+		return {
+			new:		new_,
+			new_default:(n: Expr<i32>)												=> fold<T>(I1.array.new_default(typeIndex), n),
+			new_fixed:	(...vals: Expr<T>[])										=> fold<T>(I1.array.new_fixed(typeIndex, vals.length), ...vals),
+			new_data:	(n: Expr<i32>, src: Expr<i32>, dataidx: Index)				=> fold<T>(I1.array.new_data(typeIndex, dataidx), n, src),
+			new_elem:	(n: Expr<i32>, src: Expr<i32>, elemidx: Index)				=> fold<T>(I1.array.new_elem(typeIndex, elemidx), n, src),
+			get:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get(typeIndex), arr, i),
+			get_s:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get_s(typeIndex), arr, i),
+			get_u:		(arr: Expr<T[]>, i: Expr<i32>)								=> fold<T>(I1.array.get_u(typeIndex), arr, i),
+			set:		(arr: Expr<T[]>, i: Expr<i32>, x: Expr<T>)					=> fold<void>(I1.array.set(typeIndex), arr, i,	x),
+			fill:		(arr: Expr<T[]>, i: Expr<i32>, x: Expr<T>, n: Expr<i32>)	=> fold<void>(I1.array.fill(typeIndex), arr, i,	x,	n),
+			copy:		(dst: Expr<T[]>, di: Expr<i32>, src: Expr<T[]>, si: Expr<i32>, n: Expr<i32>)=> fold<void>(I1.array.copy(typeIndex, typeIndex), dst, di, src, si, n),
+			init_data:	(arr: Expr<T[]>, i: Expr<i32>, n: Expr<i32>, dataidx: Index)=> fold<void>(I1.array.init_data(typeIndex, dataidx), arr, i, n),
+			init_elem:	(arr: Expr<T[]>, i: Expr<i32>, n: Expr<i32>, elemidx: Index)=> fold<void>(I1.array.init_elem(typeIndex, elemidx), arr, i, n),
+			len:		(arr: Expr<T[]>)											=> fold<i32>(I1.array.len, arr),
+		};
+	},
 
 	// Stack order: struct.new [field0, field1, ...]; struct.get [obj]; struct.set [obj, x]
 	// T is a tuple of field types, e.g. [number, bigint, string]
 	struct: function<T extends readonly unknown[]>(typeIndex: Index) { return {
-		new:		(...fields: { [K in keyof T]: Expr<T[K]> })					=> fold<T>(I1.struct.new(typeIndex), (fields as Expr<unknown>[]).flat()),
+		new:		(...fields: { [K in keyof T]: Expr<T[K]> })					=> fold<T>(I1.struct.new(typeIndex), ...Object.values(fields)),
 		new_default:()															=> fold<T>(I1.struct.new_default(typeIndex)),
 		get:		<F extends number & keyof T>(obj: Expr<T>, fieldidx: F)		=> fold<T[F]>(I1.struct.get(typeIndex, fieldidx), obj),
 		get_s:		<F extends number & keyof T>(obj: Expr<T>, fieldidx: F)		=> fold<T[F]>(I1.struct.get_s(typeIndex, fieldidx), obj),

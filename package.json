@@ -13,17 +13,16 @@
 		"./elf": "./dist/elf.js",
 		"./mach": "./dist/mach.js",
 		"./pe": "./dist/pe.js",
-		"./tar": "./dist/tar.js",
 		"./wasm": "./dist/wasm.js",
-		"./zip": "./dist/zip.js"
+		"./ole": "./dist/ole.js"
 	},
 	"files": [
 		"dist/**/*.{js,d.ts}",
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsc -b .",
-		"watch": "tsc --watch -p ./",
+		"build": "TS_NODE_COMPILER_OPTIONS='{\"ignoreDeprecations\":\"6.0\"}' tsc -b .",
+		"watch": "TS_NODE_COMPILER_OPTIONS='{\"ignoreDeprecations\":\"6.0\"}' tsc --watch -p ./",
 		"lint": "eslint \"src/**/*.ts\"",
 		"link": "npm link @isopodlabs/binary",
 		"update": "npm install @isopodlabs/binary@latest"

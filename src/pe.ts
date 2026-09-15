@@ -339,12 +339,12 @@ export class PE extends bin.Class({
 		oeminfo:	uint16,
 		res2:		bin.Array(10, uint16),
 	},
-	PE: bin.Offset(bin.INT32_LE, {
+	PE: bin.Merge(bin.Offset(bin.INT32_LE, {
 		sig:		bin.Expect(uint32, bin.text.stringCode("PE\0\0")),
 		...COFF_HEADER,
 		opt:		bin.Optional('SizeOfOptionalHeader', bin.Size('SizeOfOptionalHeader', OPTIONAL_HEADER)),
 		sections:	bin.Array('NumberOfSections', Section),
-	})
+	}))
 }) {
 	static check(data: Uint8Array): boolean {
 		return uint16.get(new bin.stream(data)) === bin.text.stringCode("MZ");
@@ -355,7 +355,7 @@ export class PE extends bin.Class({
 	}
 
 	get directories() {
-		return this.PE.opt?.DataDirectory;
+		return this.opt?.DataDirectory;
 	}
 
 	get directories2() {
@@ -364,14 +364,14 @@ export class PE extends bin.Class({
 			return Object.fromEntries(Object.keys(dirs).map(dir => [dir, this.ReadDirectory(dir as DirectoryName)]));
 	}
 	FindSectionRVA(rva: number) {
-		for (const i of this.PE.sections) {
+		for (const i of this.sections) {
 			if (rva >= +i.VirtualAddress && rva < +i.VirtualAddress + i.SizeOfRawData)
 				return i;
 		}
 	}
 
 	FindSectionRaw(addr: number) {
-		for (const i of this.PE.sections) {
+		for (const i of this.sections) {
 			if (addr >= +i.PointerToRawData && addr < +i.PointerToRawData + i.SizeOfRawData)
 				return i;
 		}
@@ -395,7 +395,7 @@ export class PE extends bin.Class({
 	}
 
 	ReadDirectory<T extends DirectoryName>(name: T) : DirectoryReadResult<T> {
-		const dir	= this.PE.opt?.DataDirectory[name];
+		const dir	= this.opt?.DataDirectory[name];
 		if (dir?.Size) {
 			const data 	= this.GetDataDir(dir);
 			const info	= DIRECTORIES[name];
